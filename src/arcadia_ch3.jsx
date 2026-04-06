@@ -320,90 +320,122 @@ const BATTLE_SKILLS = [
 //   呼び出し側のコードはそのまま使用できる。
 //
 const DODGE_COLLISION_MAP = {
-
-  // ── 基本行動 ──────────────────────────────────────────────────────────
-  atk: [
-    [3,4,5],          // パターンA: 中段横3列・正面スラッシュ
-    [1,4,7],          // パターンB: 縦中央列・突き
-    [0,4,8],          // パターンC: 斜め（左上→右下）
-  ],
-
-  counter: [
-    [0,1,2,6,7,8],   // パターンA: 上下6マス（中段のみ安全）
-    [0,2,6,8,4],     // パターンB: 四隅＋中央（エッジ狙い）
-    [0,1,2,3,4,5],   // パターンC: 上半分（下段のみ安全）
-  ],
-
-  unavoidable: [
-    [0,1,2,3,4,5,6,7], // 全マス（常に回避不能）
-    [1,2,3,4,5,6,7,8], // 全マス（常に回避不能）
-    [0,1,2,3,4,6,7,8], // 全マス（常に回避不能）
-    [0,1,2,4,5,6,7,8], // 全マス（常に回避不能）
-  ],
-
-  atk_all: [
-    [0,2,3,5,6,8],   // パターンA: 斜め十字・6マス
-    [1,3,4,5,7],     // パターンB: 中央十字
-  ],
-
-  dodge: [
-    [],               // コリジョンなし（常に全マス安全）
-  ],
-
   // ── 敵専用行動 ────────────────────────────────────────────────────────
-  LightningSlash: [
-    [0,1,2,3,4,5,6,7], // 全マス（常に回避不能）
-    [1,2,3,4,5,6,7,8], // 全マス（常に回避不能）
-    [0,1,2,3,4,6,7,8], // 全マス（常に回避不能）
-    [0,1,2,4,5,6,7,8], // 全マス（常に回避不能）
-  ],
-
-  reverse: [
-    [0,1,2,3,4,5,6,7,8],  
-  ],
-
-  takedown: [
-    [0,1,2,3,4,5,6,7], // ほぼ全体（下段角のみ安全）
-    [0,1,2,3,5,6,7,8], // 中央左右抜き
-  ],
-
   enrage: [ [] ],    // 怒り行動・コリジョンなし
   heal:   [ [] ],    // 回復行動・コリジョンなし
-
-  // ── 属性攻撃 ──────────────────────────────────────────────────────────
-  elem_fire: [
-    [1,4,7],          // パターンA: 縦中央列・炎柱
-    [0,3,6],          // パターンB: 縦左列
-    [2,5,8],          // パターンC: 縦右列
-  ],
-
-  elem_ice: [
-    [0,1,2,6,7,8],   // パターンA: 上下2行・氷面展開
-    [0,1,2,3,4,5],   // パターンB: 上半分
-  ],
-
-  elem_thunder: [
-    [0,2,3,5,6,8],   // パターンA: 四隅＋中段端
-    [0,2,4,6,8],     // パターンB: 斜め十字（5マス）
-  ],
-
-  elem_earth: [
-    [3,4,5,6,7,8],   // パターンA: 下半分・地震
-    [0,3,6,4,7],     // パターンB: 左列＋中段
-  ],
+  reverse:   [ [] ],    // リバース・コリジョンなし
+ 
 };
 
 // デフォルトコリジョン（定義なきアクション）
 const DODGE_COLLISION_DEFAULT = [[3,4,5]];
 
-// コリジョン取得ヘルパー
-// → 複数パターンからランダムに1つを選んで返す。呼び出し側は従来通り。
+// ─── ランダムコリジョン生成ヘルパー ───────────────────────────────────────
+// 3×3グリッド（インデックス 0-8）で「各列に必ず1マス以上」を保証しつつ
+// actionId に応じたコリジョン数レンジでランダム配置を生成する。
+//   列0: idx 0,3,6  列1: idx 1,4,7  列2: idx 2,5,8
+//
+// unavoidable / LightningSlash / reverse など「全マス」系は従来通り固定パターンを使用。
+// enrage / heal / dodge など「0マス」系も従来通り固定。
+// それ以外は actionId ごとのレンジ設定にしたがってランダム生成する。
+//
+const DODGE_RANDOM_RANGE = {
+  //              [min, max] コリジョンマス数
+  atk:         [3, 4],
+  counter:     [3, 5],
+  atk_all:     [3, 7],
+  elem_thunder:[4, 6],
+  elem_earth:  [4, 6],
+  takedown:    [4, 6],
+  StellaFritz: [7, 8],
+  LightningSlash: [8, 8],
+};
+
+/**
+ * 各列・各行に必ず1マス以上のコリジョンが入るランダム配置を生成する。
+ * @param {number} total - コリジョンマスの総数（3以上9以下）
+ * @returns {number[]} コリジョンインデックスの配列
+ */
+ const generateRandomCollision = (total) => {
+  // 3×3グリッド
+  // 番号レイアウト:  0 1 2
+  //                  3 4 5
+  //                  6 7 8
+  // 列: col0=[0,3,6]  col1=[1,4,7]  col2=[2,5,8]
+  // 行: row0=[0,1,2]  row1=[3,4,5]  row2=[6,7,8]
+
+  const MAX_ATTEMPTS = 100;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const chosen = new Set();
+
+    // Step1: 各列から1マスずつ選んで列制約を満たす
+    const cols = [[0,3,6],[1,4,7],[2,5,8]];
+    for (const col of cols) {
+      const pick = col[Math.floor(Math.random() * col.length)];
+      chosen.add(pick);
+    }
+
+    // Step2: 各行の充足チェック。不足行があれば補完
+    const rows = [[0,1,2],[3,4,5],[6,7,8]];
+    for (const row of rows) {
+      const covered = row.some(i => chosen.has(i));
+      if (!covered) {
+        // この行から1マスランダムに追加
+        const pick = row[Math.floor(Math.random() * row.length)];
+        chosen.add(pick);
+      }
+    }
+
+    // Step3: total に合わせて追加（上限9）
+    const remaining = Array.from({length:9}, (_,i) => i).filter(i => !chosen.has(i));
+    // シャッフル
+    for (let i = remaining.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+    }
+    const extraCount = Math.max(0, total - chosen.size);
+    remaining.slice(0, extraCount).forEach(i => chosen.add(i));
+
+    // Step4: 行・列ともに充足しているか最終検証
+    const result = Array.from(chosen);
+    const colOk = cols.every(col => col.some(i => chosen.has(i)));
+    const rowOk = rows.every(row => row.some(i => chosen.has(i)));
+    if (colOk && rowOk) return result;
+    // 失敗したら再試行（実際にはほぼ発生しない）
+  }
+
+  // フォールバック: 全9マス
+  return [0,1,2,3,4,5,6,7,8];
+};
+
+// コリジョン取得ヘルパー（呼び出し側のインターフェースは変わらない）
+// ・全マス系・0マス系は固定パターンをそのまま使用
+// ・DODGE_RANDOM_RANGE にある actionId はランダム生成（各列1マス以上保証）
+// ・それ以外は固定パターンからランダム選択
 const getDodgeCollision = (actionId) => {
   const patterns = (actionId in DODGE_COLLISION_MAP)
     ? DODGE_COLLISION_MAP[actionId]
     : DODGE_COLLISION_DEFAULT;
-  // パターンが空配列や不正な場合はデフォルトにフォールバック
   if (!patterns || patterns.length === 0) return DODGE_COLLISION_DEFAULT[0];
+
+  // 全マス系・0マス系は固定パターンをそのまま使用
+  const firstLen = patterns[0].length;
+  if (firstLen === 0 || firstLen >= 9) {
+    const idx = Math.floor(Math.random() * patterns.length);
+    return patterns[idx];
+  }
+
+  // ランダム生成対象
+  if (actionId in DODGE_RANDOM_RANGE) {
+    const [minC, maxC] = DODGE_RANDOM_RANGE[actionId];
+    const clampedMin = Math.max(3, minC);
+    const clampedMax = Math.min(9, maxC);
+    const total = clampedMin + Math.floor(Math.random() * (clampedMax - clampedMin + 1));
+    return generateRandomCollision(total);
+  }
+
+  // 上記以外は固定パターンからランダム選択
   const idx = Math.floor(Math.random() * patterns.length);
   return patterns[idx];
 };
