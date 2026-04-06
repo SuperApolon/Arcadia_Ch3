@@ -4115,13 +4115,15 @@ export default function ArcadiaCh2() {
             else { curPartyHp[tid] = Math.max(0, (curPartyHp[tid] ?? 0) - dmg); }
             memberDmg[tid] = (memberDmg[tid] ?? 0) + dmg;
           } else if (eAction === "counter") {
-            // 敵カウンター：攻撃(atk)したメンバー全員に個別回避グリッド
+            // 敵カウンター：この敵をターゲットに強攻(atk)したメンバーだけに反撃
             if (tCounter) {
               logs.push(`🔄 カウンター相殺！ ${tMember.icon}${tMember.name} vs ${e.def.em}${e.def.name}（互いの攻撃無効化）`);
             } else {
               let anyAtk = false;
               for (const k of currentPartyKeys) {
                 if (cmds[k] !== "atk") continue;
+                // この敵（slot）をターゲットにしていないメンバーはスキップ
+                if ((targets[k] ?? 0) !== slot) continue;
                 anyAtk = true;
                 const m = PARTY_DEFS.find(p => p.id === k);
                 const baseRaw = randInt(e.def.atk[0], e.def.atk[1]) + Math.floor(e.def.atk[1] * 0.3);
