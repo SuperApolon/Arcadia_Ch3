@@ -208,7 +208,7 @@ const ComboOverlay = ({ streak, accentColor }) => {
 };
 
 // @@SECTION_MAP ─────────────────────────────────────────────────────────────────
-// arcadia_ch3.jsx  セクション行番号マップ（@@SECTIONアンカー対応）
+// arcadia_ch2_artifact.jsx  セクション行番号マップ（@@SECTIONアンカー対応）
 // grep -n "@@SECTION" <ファイル> で最新行番号を即確認できる。
 //
 // 【コンポーネント外（グローバル定数）】
@@ -224,7 +224,7 @@ const ComboOverlay = ({ streak, accentColor }) => {
 //   BATTLE_BG_STYLE    766    BATTLE_BG_STYLE（敵タイプ → bg画像サイズ・位置）
 //   SCENE_BG_STYLE     795    SCENE_BG_STYLE（loc → bg画像サイズ・位置）
 //   SAVE_LOAD          893    セーブデータ構造定義（コンポーネント外）
-//   SCENES_CH3         897    第三章全シナリオデータ scenes[]
+//   SCENES_CH2         897    第二章全シナリオデータ scenes[]
 //
 // 【コンポーネント内（ArcadiaCh2関数内）】
 //   MAIN_COMPONENT     1421   ArcadiaCh2コンポーネント開始
@@ -258,7 +258,7 @@ const ComboOverlay = ({ streak, accentColor }) => {
 //   キャラ定義・パーティ構成変更    → UTILS (298) の ALL_CHAR_DEFS / BATTLE_PARTY_MAP
 //   シーン背景・BGMのloc対応追加    → BGM_MAPS (521) / SCENE_BG_STYLE (795)
 //   スプライト・敵画像を追加        → SPRITE_SIZE (657) / ENEMY_SIZE (699)
-//   新シーンを追加                  → SCENES_CH3 (897)
+//   新シーンを追加                  → SCENES_CH2 (897)
 //   ダイアログイベントを追加        → LOGIC_DIALOG_TAP (1903)
 //   バトルコマンド処理を変更        → LOGIC_SELECT_CMD (2127)
 //   複数敵ターン処理を変更          → LOGIC_MULTI_TURN (2248)
@@ -288,12 +288,125 @@ const C = {
 //   データの正本は battle_defs.js で管理。JSXとの同期を保つこと。
 
 // ─── プレイヤー行動 ───────────────────────────────────────────────────────
+// ★ dodge はコマンドから削除。敵攻撃ごとに自動で回避グリッド判定が挟まる。
 const BATTLE_SKILLS = [
   { id:"atk",     label:"強攻",      icon:"⚔",  color:"#00ffcc", cost:0,  dmg:[14,22] },
   { id:"counter", label:"カウンター", icon:"🔄", color:"#f97316", cost:10, dmg:[18,28] },
-  { id:"dodge",   label:"回避",      icon:"💨",  color:"#a78bfa", cost:8,  dmg:[12,20]  },
   { id:"heal",    label:"回復",      icon:"🧪",  color:"#f0c040", cost:0,  dmg:[0,0]   },
 ];
+
+// ─── 回避グリッドコリジョンマップ（マルチパターン対応） ─────────────────
+//
+// 番号レイアウト:  0 1 2
+//                 3 4 5
+//                 6 7 8
+//
+// 【書き方】
+//   各アクションIDに対して「パターンの配列」を設定する。
+//   パターンが複数あるとき → 実行時にランダムで1つ選ばれる。
+//   パターンが1つのとき   → 常にそれが使われる（従来と同じ）。
+//
+//   例：atk に3パターン設定する場合
+//     atk: [
+//       [3,4,5],       // パターンA: 中段横3列
+//       [1,4,7],       // パターンB: 縦中央列
+//       [0,4,8],       // パターンC: 斜め（左上→右下）
+//     ],
+//
+//   コリジョンなし（全マス安全）にしたいときは空配列を1パターンとして入れる：
+//     dodge: [ [] ],
+//
+// ★ getDodgeCollision(actionId) のインターフェースは変わらない。
+//   呼び出し側のコードはそのまま使用できる。
+//
+const DODGE_COLLISION_MAP = {
+
+  // ── 基本行動 ──────────────────────────────────────────────────────────
+  atk: [
+    [3,4,5],          // パターンA: 中段横3列・正面スラッシュ
+    [1,4,7],          // パターンB: 縦中央列・突き
+    [0,4,8],          // パターンC: 斜め（左上→右下）
+  ],
+
+  counter: [
+    [0,1,2,6,7,8],   // パターンA: 上下6マス（中段のみ安全）
+    [0,2,6,8,4],     // パターンB: 四隅＋中央（エッジ狙い）
+    [0,1,2,3,4,5],   // パターンC: 上半分（下段のみ安全）
+  ],
+
+  unavoidable: [
+    [0,1,2,3,4,5,6,7], // 全マス（常に回避不能）
+    [1,2,3,4,5,6,7,8], // 全マス（常に回避不能）
+    [0,1,2,3,4,6,7,8], // 全マス（常に回避不能）
+    [0,1,2,4,5,6,7,8], // 全マス（常に回避不能）
+  ],
+
+  atk_all: [
+    [0,2,3,5,6,8],   // パターンA: 斜め十字・6マス
+    [1,3,4,5,7],     // パターンB: 中央十字
+  ],
+
+  dodge: [
+    [],               // コリジョンなし（常に全マス安全）
+  ],
+
+  // ── 敵専用行動 ────────────────────────────────────────────────────────
+  LightningSlash: [
+    [0,1,2,3,4,5,6,7], // 全マス（常に回避不能）
+    [1,2,3,4,5,6,7,8], // 全マス（常に回避不能）
+    [0,1,2,3,4,6,7,8], // 全マス（常に回避不能）
+    [0,1,2,4,5,6,7,8], // 全マス（常に回避不能）
+  ],
+
+  reverse: [
+    [0,1,2,3,4,5,6,7,8],  
+  ],
+
+  takedown: [
+    [0,1,2,3,4,5,6,7], // ほぼ全体（下段角のみ安全）
+    [0,1,2,3,5,6,7,8], // 中央左右抜き
+  ],
+
+  enrage: [ [] ],    // 怒り行動・コリジョンなし
+  heal:   [ [] ],    // 回復行動・コリジョンなし
+
+  // ── 属性攻撃 ──────────────────────────────────────────────────────────
+  elem_fire: [
+    [1,4,7],          // パターンA: 縦中央列・炎柱
+    [0,3,6],          // パターンB: 縦左列
+    [2,5,8],          // パターンC: 縦右列
+  ],
+
+  elem_ice: [
+    [0,1,2,6,7,8],   // パターンA: 上下2行・氷面展開
+    [0,1,2,3,4,5],   // パターンB: 上半分
+  ],
+
+  elem_thunder: [
+    [0,2,3,5,6,8],   // パターンA: 四隅＋中段端
+    [0,2,4,6,8],     // パターンB: 斜め十字（5マス）
+  ],
+
+  elem_earth: [
+    [3,4,5,6,7,8],   // パターンA: 下半分・地震
+    [0,3,6,4,7],     // パターンB: 左列＋中段
+  ],
+};
+
+// デフォルトコリジョン（定義なきアクション）
+const DODGE_COLLISION_DEFAULT = [[3,4,5]];
+
+// コリジョン取得ヘルパー
+// → 複数パターンからランダムに1つを選んで返す。呼び出し側は従来通り。
+const getDodgeCollision = (actionId) => {
+  const patterns = (actionId in DODGE_COLLISION_MAP)
+    ? DODGE_COLLISION_MAP[actionId]
+    : DODGE_COLLISION_DEFAULT;
+  // パターンが空配列や不正な場合はデフォルトにフォールバック
+  if (!patterns || patterns.length === 0) return DODGE_COLLISION_DEFAULT[0];
+  const idx = Math.floor(Math.random() * patterns.length);
+  return patterns[idx];
+};
 
 // ─── 敵定義 ─────────────────────────────────────────────────────────────
 // ★ パターン変更は各エネミーの pattern:[...] だけ編集すればOK
@@ -1753,9 +1866,9 @@ function VictoryButton({ onFanfareStart, onProceed }) {
 // セーブJSON: { version, chapter, savedAt, player:{hp,mhp,mp,mmp,elk,lv,exp,weapon,weaponPatk,statPoints,statAlloc,hasPb,hasMapScan,inCom,hasBbs} }
 
 // ============================================================
-// @@SECTION:SCENES_CH3 -- 第三章シナリオデータ
+// @@SECTION:SCENES_CH2 -- 第二章シナリオデータ
 // ============================================================
-const SCENES_CH3_URL = "https://raw.githubusercontent.com/superapolon/Arcadia_Ch3/main/scenes_ch3.json";
+const SCENES_CH2_URL = "https://raw.githubusercontent.com/superapolon/Arcadia_Ch2/main/scenes_ch2.json";
 
 // @@SECTION:MAIN_COMPONENT
 export default function ArcadiaCh2() {
@@ -1765,9 +1878,9 @@ export default function ArcadiaCh2() {
   const [scenesLoading, setScenesLoading] = useState(true);
   const [scenesError, setScenesError] = useState(false);
   useEffect(() => {
-    // scenes_ch3.json は実際にはJSオブジェクトリテラル形式のため
+    // scenes_ch2.json は実際にはJSオブジェクトリテラル形式のため
     // テキストとして取得し Function() で安全に評価する
-    fetch(SCENES_CH3_URL)
+    fetch(SCENES_CH2_URL)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
       .then(text => {
         // コメント行（// ...）を除去
@@ -2180,6 +2293,35 @@ export default function ArcadiaCh2() {
   const [memberCdMap,          setMemberCdMap         ] = useState({}); // ← 追加
   // playerStunActive > 0: 敵スキル（テイクダウン等）によりパーティが行動不能な残りターン数
   const [playerStunActive,     setPlayerStunActive    ] = useState(0);
+
+  // ── 回避グリッドUIステート（新・自動発動式） ────────────────────────────
+  // dodgeGridPhase: null | "select" | "result"
+  const [dodgeGridPhase,     setDodgeGridPhase    ] = useState(null);
+  // dodgeGridCollision: コリジョンマスのインデックス配列
+  const [dodgeGridCollision, setDodgeGridCollision] = useState([]);
+  // dodgeGridSelected: プレイヤーが選択したマスのインデックス
+  const [dodgeGridSelected,  setDodgeGridSelected ] = useState(null);
+  // dodgeGridSuccess: true=回避成功 / false=失敗
+  const [dodgeGridSuccess,   setDodgeGridSuccess  ] = useState(false);
+  // dodgeGridAttackInfo: 現在表示中の攻撃情報 { enemyIcon, enemyName, actionId, isAll }
+  const [dodgeGridAttackInfo, setDodgeGridAttackInfo] = useState(null);
+  // dodgeGridTargetLabel: 対象メンバー表示 { icon, name } | null(全体)
+  const [dodgeGridTargetLabel, setDodgeGridTargetLabel] = useState(null);
+
+  // ── 回避判定キューシステム ──────────────────────────────────────────────
+  // dodgeQueue: 処理待ちの回避判定リスト
+  //   各要素: { memberId: string|"all", collision: number[], attackInfo: {...} }
+  // "all"=全体攻撃（全員一括でグリッドを共有）
+  const [dodgeQueue,      setDodgeQueue     ] = useState([]);
+  // dodgeResultMap: { memberId → boolean(true=回避成功) } 判定結果蓄積
+  const dodgeResultMapRef = useRef({});
+  // resumeTurnRef: 判定完了後に呼ぶターン継続コールバック
+  const resumeTurnRef = useRef(null);
+  // dodgeTimerRef: 制限時間タイマーID
+  const dodgeTimerRef = useRef(null);
+  // dodgeTimeLeft: 残り秒数表示用 (5→0)
+  const [dodgeTimeLeft, setDodgeTimeLeft] = useState(5);
+
    // ── プレイング分析ステート ──────────────────────────────────────────────
    const [battleAnalytics, setBattleAnalytics] = useState([]);
    const [totalElemBreaks, setTotalElemBreaks] = useState(0);
@@ -2774,6 +2916,9 @@ export default function ArcadiaCh2() {
   }, []);
   const resetInputPhase = useCallback(() => {
     setInputPhase("command"); setPendingCommands({}); setPendingTargets({}); setPendingTargetSelect(null); setCmdInputIdx(0);
+    setDodgeGridPhase(null); setDodgeGridSelected(null); setDodgeGridCollision([]);
+    setDodgeGridAttackInfo(null); setDodgeGridTargetLabel(null); setDodgeQueue([]);
+    dodgeResultMapRef.current = {}; resumeTurnRef.current = null;
   }, []);
   const resetDebuffs = useCallback(() => {
     setEnemySpdDebuff(0); setEnrageCount(0); setEnemyAtkDebuff(0); setPartySpdBuff(0);
@@ -3207,18 +3352,16 @@ export default function ArcadiaCh2() {
   const ENEMY_BASE_SPD = 12; // シムルー基本SPD
 
   // ─── すくみ判定ヘルパー ────────────────────────────────────────────────
+  // dodge はコマンドから除去済み。敵の dodge 行動への対応は残す。
   function judgeRPS(playerAction, enemyAction) {
     if (enemyAction === "unavoidable") {
-      if (playerAction === "counter" || playerAction === "dodge") return "lose_unavoidable";
+      if (playerAction === "counter") return "lose_unavoidable";
       return "neutral";
     }
     if (playerAction === "atk"     && enemyAction === "counter") return "lose";
     if (playerAction === "counter" && enemyAction === "atk")     return "win";
-    if (playerAction === "counter" && enemyAction === "dodge")   return "lose";   // 敵dodge+反撃
-    if (playerAction === "dodge"   && enemyAction === "counter") return "win";    // dodge+反撃
-    if (playerAction === "dodge"   && enemyAction === "atk")     return "lose";   // 被弾
-    if (playerAction === "atk"     && enemyAction === "dodge")   return "win";    // 直撃
-    if (playerAction === "dodge"   && enemyAction === "dodge")   return "neutral"; // 相殺
+    if (playerAction === "counter" && enemyAction === "dodge")   return "lose";
+    if (playerAction === "atk"     && enemyAction === "dodge")   return "win";
     return "neutral";
   }
 
@@ -3308,7 +3451,7 @@ export default function ArcadiaCh2() {
       return;
     }
 
-    // ターゲット不要（heal/dodge）: targetIdx=0 をデフォルトで割り当て
+    // ターゲット不要（heal等）: targetIdx=0 をデフォルトで割り当て
     const newTargets = { ...pendingTargets, [member.id]: 0 };
 
     const newCmds = { ...pendingCommands, [member.id]: skillId };
@@ -3375,8 +3518,91 @@ export default function ArcadiaCh2() {
     }
   }, [pendingTargetSelect, pendingTargets, pendingCommands, multiEnemies, hp, partyHp]);
 
-  // @@SECTION:LOGIC_MULTI_TURN ──────────────────────────────────────────────────
-  // 複数敵バトルのターン実行（multiEnemies配列を使用）
+  // ── 回避グリッド：マス選択確定コールバック ────────────────────────────
+  // 新方式：キューから1件ずつ取り出して表示し、全完了後 resumeTurn を呼ぶ
+  // ── 回避グリッド制限時間タイマー（5秒で強制失敗）──────────────────────
+  useEffect(() => {
+    // タイマークリア共通処理
+    const clearDodgeTimer = () => {
+      if (dodgeTimerRef.current) {
+        clearInterval(dodgeTimerRef.current);
+        dodgeTimerRef.current = null;
+      }
+    };
+
+    if (dodgeGridPhase === "select") {
+      setDodgeTimeLeft(5);
+      let remaining = 5;
+      dodgeTimerRef.current = setInterval(() => {
+        remaining -= 1;
+        setDodgeTimeLeft(remaining);
+        if (remaining <= 0) {
+          clearDodgeTimer();
+          // 制限時間切れ → コリジョンマスを強制選択して失敗
+          const forceFailCell = dodgeGridCollision.length > 0
+            ? dodgeGridCollision[0]
+            : 4; // コリジョンなし時はセンター(4)を選択
+          onConfirmDodgeGrid(forceFailCell);
+        }
+      }, 1000);
+    } else {
+      clearDodgeTimer();
+    }
+
+    return () => clearDodgeTimer();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dodgeGridPhase]);
+
+  const onConfirmDodgeGrid = useCallback((cellIdx) => {
+    const isHit = dodgeGridCollision.includes(cellIdx);
+    const success = !isHit;
+    setDodgeGridSelected(cellIdx);
+    setDodgeGridSuccess(success);
+    setDodgeGridPhase("result");
+
+    setTimeout(() => {
+      // 現在の判定対象 memberId を取得（キューの先頭）
+      setDodgeQueue(prev => {
+        const [current, ...rest] = prev;
+        if (!current) return prev;
+
+        // 結果を記録
+        if (current.memberId === "all") {
+          // 全体攻撃：全員に同じ結果を記録
+          current.allTargets.forEach(id => {
+            dodgeResultMapRef.current[`${current.attackKey}_${id}`] = success;
+          });
+        } else {
+          dodgeResultMapRef.current[`${current.attackKey}_${current.memberId}`] = success;
+        }
+
+        if (rest.length > 0) {
+          // 次のキューを表示
+          const next = rest[0];
+          setDodgeGridCollision(next.collision);
+          setDodgeGridSelected(null);
+          setDodgeGridSuccess(false);
+          setDodgeGridAttackInfo(next.attackInfo);
+          setDodgeGridTargetLabel(next.targetLabel);
+          setDodgeGridPhase("select");
+          return rest;
+        } else {
+          // 全判定完了 → ターン再開
+          setDodgeGridPhase(null);
+          setDodgeGridSelected(null);
+          setDodgeGridCollision([]);
+          setDodgeGridAttackInfo(null);
+          setDodgeGridTargetLabel(null);
+          if (resumeTurnRef.current) {
+            const resume = resumeTurnRef.current;
+            resumeTurnRef.current = null;
+            setTimeout(resume, 50);
+          }
+          return [];
+        }
+      });
+    }, 1100);
+  }, [dodgeGridCollision]);
   // 5フェーズ構成：プリフェイズ → メインフェイズ → エンドフェイズ → コンボジャッジ → アップデート
   const executeMultiTurn = useCallback((cmds, targets) => {
     const enemies = multiEnemies;
@@ -3451,6 +3677,8 @@ export default function ArcadiaCh2() {
     // エフェクト蓄積バッファ（ターン処理後にまとめてsetStateする）
     const pendingHitFx    = []; // { slotIdx, dmg, type }
     const pendingDefeatFx = []; // { slotIdx }
+    // 回避判定キュー（敵が攻撃するたびにここに積む、フェーズ完了後UIへ渡す）
+    const pendingDodgeQueue = []; // { memberId, allTargets, collision, attackKey, attackInfo, targetLabel, applyDamage }
 
     logs.push(`─ ターン ${turn + 1} ─`);
     setcurrentBattleTotalTurns(prev => prev + 1);
@@ -3468,12 +3696,11 @@ export default function ArcadiaCh2() {
     //   counter / dodge は「最速判定」。ここで意図を宣言し、
     //   メインフェイズの敵行動タイミングで解決する。
     // ══════════════════════════════════════════════════════════════════
-    const memberDodge   = Object.fromEntries(currentPartyKeys.map(k => [k, (cmds[k] ?? "atk") === "dodge"]));
+    // memberCounter: カウンター宣言メンバー map（dodge はコマンドから除去済み）
     const memberCounter = Object.fromEntries(currentPartyKeys.map(k => [k, (cmds[k] ?? "atk") === "counter"]));
     currentPartyKeys.forEach(k => {
       const m = PARTY_DEFS.find(p => p.id === k);
       if (!m) return;
-      if (memberDodge[k])   logs.push(`${m.icon}${m.name} 💨 回避態勢！（敵の攻撃を待つ）`);
       if (memberCounter[k]) logs.push(`${m.icon}${m.name} 🔄 カウンター構え！（敵の強攻を待つ）`);
     });
     aliveEnemies.forEach(e => {
@@ -3494,7 +3721,7 @@ export default function ArcadiaCh2() {
       const skillId = cmds[actor.id] ?? "atk";
       const sk_def  = SKILL_DEFS[skillId];
       if (!sk_def || !sk_def.isPrephase) continue;
-      if (sk_def.hits === 0 || skillId === "counter" || skillId === "dodge") continue; // counter/dodge はメインフェイズで解決
+      if (sk_def.hits === 0 || skillId === "counter") continue; // counter はメインフェイズで解決
 
       const memberAtkBonus = actor.id === "eltz" ? atkBonus : (ALL_CHAR_DEFS[actor.id]?.atk ?? 0);
       const weaponType = actor.id === "eltz" ? (equippedWeapon?.weaponType ?? "none") : "none";
@@ -3829,51 +4056,58 @@ export default function ArcadiaCh2() {
           const spdSorted = [...(alivePartyDefs.length > 0 ? alivePartyDefs : PARTY_DEFS)].sort((a, b) => a.spd - b.spd);
           const tMember = spdSorted[0];
           const tid = tMember.id;
-          const tDodge   = memberDodge[tid]   ?? false;
           const tCounter = memberCounter[tid] ?? false;
           if (eAction === "dodge") {
-            if (tCounter) {
-              const baseRaw = randInt(e.def.atk[0], e.def.atk[1]) + Math.floor(e.def.atk[1] * 0.3);
-              const cd = Math.max(1, Math.round(baseRaw * totalMult) - getMemberDef(tid));
-              if (tid === "eltz") { curHp = Math.max(0, curHp - cd); }
-              else { curPartyHp[tid] = Math.max(0, (curPartyHp[tid] ?? 0) - cd); }
-              memberDmg[tid] = (memberDmg[tid] ?? 0) + cd;
-              logs.push(`${e.def.em}${e.def.name} 💨 回避！ ${tMember.icon}${tMember.name}のカウンターをかわし → ${tMember.icon}${tMember.name}に ${cd} ダメージで反撃！（${tMember.name}の強攻を無効化）`);
-            } else if (tDodge) {
-              logs.push(`💨 回避相殺！ ${tMember.icon}${tMember.name} vs ${e.def.em}${e.def.name}（互いに無効）`);
-            } else {
-              logs.push(`${e.def.em}${e.def.name} 💨 回避！`);
-            }
+            logs.push(`${e.def.em}${e.def.name} 💨 回避！`);
           } else if (eAction === "enrage") {
             logs.push(`${e.def.em}${e.def.name} 🔴 怒り状態に！`);
           } else if (eAction === "atk_all") {
-            // 全体攻撃：回避・カウンター無効、全員にダメージ
+            // ── 全体攻撃：全員一括で回避判定キューに積む ──────────────────────
             const baseAtk = Math.round(randInt(e.def.atk[0], e.def.atk[1]) * totalMult);
-            logs.push(`${e.def.em}${e.def.name} 🌊全体攻撃${halfLabel}`);
-            for (const k of currentPartyKeys) {
-              const mDef = getMemberDef(k);
-              const mDmg = Math.max(1, baseAtk - mDef);
-              if (k === "eltz") { curHp = Math.max(0, curHp - mDmg); }
-              else { curPartyHp[k] = Math.max(0, (curPartyHp[k] ?? 0) - mDmg); }
-              memberDmg[k] = (memberDmg[k] ?? 0) + mDmg;
-              logs.push(`  → ${ALL_CHAR_DEFS[k]?.icon ?? ""}${ALL_CHAR_DEFS[k]?.name ?? k} ${mDmg}ダメージ！`);
-            }
-            // オルガが全体攻撃ならバックステップアニメを挟む
-            if (e.type === "olga") {
-              resetOlgaJump(); // 2回目以降も確実に初期化
-              playOlgaBackstep().then(() => {
-                // バックステップ完了後にドラゴン突進開始
-                // ドラゴン完了時にリターンシーケンスを起動するコールバックをセット
-                olgaJumpCallbackRef.current = () => { playOlgaReturn(); };
-                setShowAtkAllAnim(false);
-                setTimeout(() => { setAtkAllAnimKey(k => k + 1); setShowAtkAllAnim(true); }, 0);
-              });
-            } else {
-              setShowAtkAllAnim(false); // 一旦リセットして再マウントを強制
-              setTimeout(() => { setAtkAllAnimKey(k => k + 1); setShowAtkAllAnim(true); }, 0);
-            }
+            logs.push(`${e.def.em}${e.def.name} 🌊全体攻撃${halfLabel} ─ 全員の回避判定へ`);
+            const allTargetIds = currentPartyKeys.filter(k =>
+              (k === "eltz" ? curHp : (curPartyHp[k] ?? 0)) > 0
+            );
+            pendingDodgeQueue.push({
+              memberId: "all",
+              allTargets: allTargetIds,
+              collision: getDodgeCollision("atk_all"),
+              attackKey: `atk_all_${slot}`,
+              attackInfo: { enemyIcon: e.def.em, enemyName: e.def.name, actionId: "atk_all", isAll: true },
+              targetLabel: null,
+              // ダメージ適用クロージャ
+              applyDamage: (resultMap) => {
+                const attackKey = `atk_all_${slot}`;
+                // 全員一括なのでメンバーごとに判定（同じキーを使うため全員同じ成否）
+                for (const k of allTargetIds) {
+                  const dodged = resultMap[`${attackKey}_${k}`] ?? false;
+                  if (dodged) {
+                    logs.push(`  → ${ALL_CHAR_DEFS[k]?.icon ?? ""}${ALL_CHAR_DEFS[k]?.name ?? k} 💨 回避！`);
+                    continue;
+                  }
+                  const mDef = getMemberDef(k);
+                  const mDmg = Math.max(1, baseAtk - mDef);
+                  if (k === "eltz") { curHp = Math.max(0, curHp - mDmg); }
+                  else { curPartyHp[k] = Math.max(0, (curPartyHp[k] ?? 0) - mDmg); }
+                  memberDmg[k] = (memberDmg[k] ?? 0) + mDmg;
+                  logs.push(`  → ${ALL_CHAR_DEFS[k]?.icon ?? ""}${ALL_CHAR_DEFS[k]?.name ?? k} ${mDmg}ダメージ！`);
+                }
+                // オルガの全体攻撃アニメ
+                if (e.type === "olga") {
+                  resetOlgaJump();
+                  playOlgaBackstep().then(() => {
+                    olgaJumpCallbackRef.current = () => { playOlgaReturn(); };
+                    setShowAtkAllAnim(false);
+                    setTimeout(() => { setAtkAllAnimKey(k => k + 1); setShowAtkAllAnim(true); }, 0);
+                  });
+                } else {
+                  setShowAtkAllAnim(false);
+                  setTimeout(() => { setAtkAllAnimKey(k => k + 1); setShowAtkAllAnim(true); }, 0);
+                }
+              },
+            });
           } else if (eAction === "unavoidable") {
-            // 回避不能：counter/dodge両方無効、ターゲット単体に直撃
+            // 回避不能：回避グリッドなし・直接ダメージ
             const [minD, maxD] = e.def.unavoidableAtk ?? [30,45];
             const dmg = Math.max(1, Math.round(randInt(minD, maxD) * totalMult) - getMemberDef(tid));
             logs.push(`${e.def.em}${rageLabel}💥回避不能${halfLabel} ${tMember.icon}${tMember.name}に${dmg}ダメージ！`);
@@ -3881,20 +4115,10 @@ export default function ArcadiaCh2() {
             else { curPartyHp[tid] = Math.max(0, (curPartyHp[tid] ?? 0) - dmg); }
             memberDmg[tid] = (memberDmg[tid] ?? 0) + dmg;
           } else if (eAction === "counter") {
-            // 敵カウンター：攻撃(atk)したメンバー全員に個別ダメージ、dodge→回避+反撃、counter→相殺
-            // まずdodge/counterの代表判定（spdSorted[0]基準）
-            if (tDodge) {
-              const csk = BATTLE_SKILLS.find(s => s.id === "dodge");
-              const dodgeDmg = Math.max(1, Math.round((randInt(csk.dmg[0], csk.dmg[1]) + (tid === "eltz" ? atkBonus : 0)) * comboAtkMult) - (e.def.pdef ?? 0));
-              const eIdx = curEnemies.findIndex(en => en.slot === slot);
-              curEnemies[eIdx].hp = Math.max(0, e.hp - dodgeDmg);
-              if (curEnemies[eIdx].hp <= 0) { curEnemies[eIdx].defeated = true; pendingDefeatFx.push({ slotIdx: eIdx }); }
-              pendingHitFx.push({ slotIdx: eIdx, dmg: dodgeDmg, type: "normal" });
-              logs.push(`${tMember.icon}${tMember.name} 💨 回避成功！ ${e.def.name}のカウンターをかわし → ${e.def.em}${e.def.name}に${dodgeDmg}ダメージで反撃！`);
-            } else if (tCounter) {
+            // 敵カウンター：攻撃(atk)したメンバー全員に個別回避グリッド
+            if (tCounter) {
               logs.push(`🔄 カウンター相殺！ ${tMember.icon}${tMember.name} vs ${e.def.em}${e.def.name}（互いの攻撃無効化）`);
             } else {
-              // atk を選択したメンバー全員に個別カウンターダメージ（executePartyTurnと同式）
               let anyAtk = false;
               for (const k of currentPartyKeys) {
                 if (cmds[k] !== "atk") continue;
@@ -3902,13 +4126,32 @@ export default function ArcadiaCh2() {
                 const m = PARTY_DEFS.find(p => p.id === k);
                 const baseRaw = randInt(e.def.atk[0], e.def.atk[1]) + Math.floor(e.def.atk[1] * 0.3);
                 const cd = Math.max(1, Math.round(baseRaw * totalMult) - getMemberDef(k));
-                if (k === "eltz") { curHp = Math.max(0, curHp - cd); }
-                else { curPartyHp[k] = Math.max(0, (curPartyHp[k] ?? 0) - cd); }
-                memberDmg[k] = (memberDmg[k] ?? 0) + cd;
-                logs.push(`${e.def.em}${rageLabel}🔄 ${e.def.name}カウンター！${halfLabel} ${m.icon}${m.name}に ${cd} ダメージ！（${m.name}の強攻を無効化）`);
+                const attackKey = `counter_${slot}_${k}`;
+                logs.push(`${e.def.em}${rageLabel}🔄 ${e.def.name}カウンター！${halfLabel} ${m.icon}${m.name} ─ 回避判定へ`);
+                const capturedK = k;
+                const capturedM = m;
+                const capturedCd = cd;
+                pendingDodgeQueue.push({
+                  memberId: capturedK,
+                  allTargets: null,
+                  collision: getDodgeCollision("counter"),
+                  attackKey,
+                  attackInfo: { enemyIcon: e.def.em, enemyName: e.def.name, actionId: "counter", isAll: false },
+                  targetLabel: { icon: capturedM.icon, name: capturedM.name },
+                  applyDamage: (resultMap) => {
+                    const dodged = resultMap[`${attackKey}_${capturedK}`] ?? false;
+                    if (dodged) {
+                      logs.push(`${capturedM.icon}${capturedM.name} 💨 カウンターを回避！`);
+                    } else {
+                      if (capturedK === "eltz") { curHp = Math.max(0, curHp - capturedCd); }
+                      else { curPartyHp[capturedK] = Math.max(0, (curPartyHp[capturedK] ?? 0) - capturedCd); }
+                      memberDmg[capturedK] = (memberDmg[capturedK] ?? 0) + capturedCd;
+                      logs.push(`${e.def.em}${rageLabel}🔄 ${e.def.name}カウンター！ ${capturedM.icon}${capturedM.name}に ${capturedCd} ダメージ！`);
+                    }
+                  },
+                });
               }
               if (!anyAtk) {
-                // heal等の非攻撃行動のみ：カウンター不成立
                 logs.push(`${e.def.em}${e.def.name} 🔄 カウンター構え...しかし不発！`);
               }
             }
@@ -3917,53 +4160,91 @@ export default function ArcadiaCh2() {
             if (eAction === "LightningSlash") playLightningEffect();
             if (eAction === "StellaFritz") playStellaEffect(),playCUTIN2Effect();
             const sk_def = SKILL_DEFS[eAction];
-            const eAtkBonus = Math.round((e.def.atk[0] + e.def.atk[1]) / 2); // 敵ATKの平均値をatkBonusに
-  
+
             if (sk_def.target === "all") {
-              // 全体攻撃スキル
+              // 全体攻撃スキル：全員一括回避
               const baseAtk = sk_def.baseDmg && sk_def.baseDmg[0] > 0
-              ? Math.round(randInt(sk_def.baseDmg[0], sk_def.baseDmg[1]) * totalMult)
-              : Math.round(randInt(e.def.atk[0], e.def.atk[1]) * totalMult);
+                ? Math.round(randInt(sk_def.baseDmg[0], sk_def.baseDmg[1]) * totalMult)
+                : Math.round(randInt(e.def.atk[0], e.def.atk[1]) * totalMult);
               const hitLabel = sk_def.hits > 1 ? ` (${sk_def.hits}hit)` : "";
-              logs.push(`${e.def.em}${e.def.name} ${sk_def.icon}${sk_def.label}${hitLabel}！ 全体攻撃${halfLabel}`);
-              for (const k of currentPartyKeys) {
-                const mDef = getMemberDef(k);
-                const dmgPerHit = Math.max(1, Math.round(baseAtk * sk_def.dmgMult) - mDef);
-                const totalSkDmg = dmgPerHit * sk_def.hits;
-                if (k === "eltz") { curHp = Math.max(0, curHp - totalSkDmg); }
-                else { curPartyHp[k] = Math.max(0, (curPartyHp[k] ?? 0) - totalSkDmg); }
-                memberDmg[k] = (memberDmg[k] ?? 0) + totalSkDmg;
-                logs.push(`  → ${ALL_CHAR_DEFS[k]?.icon ?? ""}${ALL_CHAR_DEFS[k]?.name ?? k} ${totalSkDmg}ダメージ！`);
-              }
+              logs.push(`${e.def.em}${e.def.name} ${sk_def.icon}${sk_def.label}${hitLabel}！ 全体攻撃${halfLabel} ─ 全員の回避判定へ`);
+              const allTargetIds2 = currentPartyKeys.filter(k =>
+                (k === "eltz" ? curHp : (curPartyHp[k] ?? 0)) > 0
+              );
+              const attackKey2 = `skill_all_${eAction}_${slot}`;
+              pendingDodgeQueue.push({
+                memberId: "all",
+                allTargets: allTargetIds2,
+                collision: getDodgeCollision(eAction),
+                attackKey: attackKey2,
+                attackInfo: { enemyIcon: e.def.em, enemyName: e.def.name, actionId: eAction, isAll: true },
+                targetLabel: null,
+                applyDamage: (resultMap) => {
+                  for (const k of allTargetIds2) {
+                    const dodged = resultMap[`${attackKey2}_${k}`] ?? false;
+                    if (dodged) {
+                      logs.push(`  → ${ALL_CHAR_DEFS[k]?.icon ?? ""}${ALL_CHAR_DEFS[k]?.name ?? k} 💨 回避！`);
+                      continue;
+                    }
+                    const mDef = getMemberDef(k);
+                    const dmgPerHit = Math.max(1, Math.round(baseAtk * sk_def.dmgMult) - mDef);
+                    const totalSkDmg = dmgPerHit * sk_def.hits;
+                    if (k === "eltz") { curHp = Math.max(0, curHp - totalSkDmg); }
+                    else { curPartyHp[k] = Math.max(0, (curPartyHp[k] ?? 0) - totalSkDmg); }
+                    memberDmg[k] = (memberDmg[k] ?? 0) + totalSkDmg;
+                    logs.push(`  → ${ALL_CHAR_DEFS[k]?.icon ?? ""}${ALL_CHAR_DEFS[k]?.name ?? k} ${totalSkDmg}ダメージ！`);
+                  }
+                },
+              });
             } else {
-              // 単体攻撃スキル（SPD最低のメンバーを狙う）
+              // 単体攻撃スキル
               const hitLabel = sk_def.hits > 1 ? ` (${sk_def.hits}hit)` : "";
               const baseRaw = sk_def.baseDmg && sk_def.baseDmg[0] > 0
                 ? Math.round(randInt(sk_def.baseDmg[0], sk_def.baseDmg[1]) * totalMult * sk_def.dmgMult)
                 : Math.round(randInt(e.def.atk[0], e.def.atk[1]) * totalMult * sk_def.dmgMult);
               const dmgPerHit = Math.max(1, baseRaw - getMemberDef(tid));
               const totalSkDmg = dmgPerHit * sk_def.hits;
-              if (tid === "eltz") { curHp = Math.max(0, curHp - totalSkDmg); }
-              else { curPartyHp[tid] = Math.max(0, (curPartyHp[tid] ?? 0) - totalSkDmg); }
-              memberDmg[tid] = (memberDmg[tid] ?? 0) + totalSkDmg;
-              if (sk_def.label === "リバース"){
+              const attackKey3 = `skill_single_${eAction}_${slot}`;
+
+              if (sk_def.label === "リバース") {
                 enemyReverseSet = sk_def.reversePhaze ?? 5;
-              logs.push(`${e.def.em}${e.def.name}がリバースを発動！　何かがおかしい。空間が逆転する`);
-              playCUTINEffect();
-              }else {
-                logs.push(`${e.def.em}${rageLabel}${sk_def.icon}${e.def.name}が${sk_def.label}${hitLabel}！${halfLabel} ${tMember.icon}${tMember.name}に${totalSkDmg}ダメージ！`);
+                logs.push(`${e.def.em}${e.def.name}がリバースを発動！　何かがおかしい。空間が逆転する`);
+                playCUTINEffect();
+                // リバースはダメージなし
+              } else {
+                logs.push(`${e.def.em}${rageLabel}${sk_def.icon}${e.def.name}が${sk_def.label}${hitLabel}！${halfLabel} ${tMember.icon}${tMember.name} ─ 回避判定へ`);
+                const capturedTid = tid;
+                const capturedTMember = tMember;
+                pendingDodgeQueue.push({
+                  memberId: capturedTid,
+                  allTargets: null,
+                  collision: getDodgeCollision(eAction),
+                  attackKey: attackKey3,
+                  attackInfo: { enemyIcon: e.def.em, enemyName: e.def.name, actionId: eAction, isAll: false },
+                  targetLabel: { icon: capturedTMember.icon, name: capturedTMember.name },
+                  applyDamage: (resultMap) => {
+                    const dodged = resultMap[`${attackKey3}_${capturedTid}`] ?? false;
+                    if (dodged) {
+                      logs.push(`${capturedTMember.icon}${capturedTMember.name} 💨 ${sk_def.label}を回避！`);
+                    } else {
+                      if (capturedTid === "eltz") { curHp = Math.max(0, curHp - totalSkDmg); }
+                      else { curPartyHp[capturedTid] = Math.max(0, (curPartyHp[capturedTid] ?? 0) - totalSkDmg); }
+                      memberDmg[capturedTid] = (memberDmg[capturedTid] ?? 0) + totalSkDmg;
+                      logs.push(`${e.def.em}${rageLabel}${sk_def.icon}${e.def.name}が${sk_def.label}${hitLabel}！ ${capturedTMember.icon}${capturedTMember.name}に${totalSkDmg}ダメージ！`);
+                    }
+                  },
+                });
               }
             }
-            // 敵スキルにパーティスタン効果がある場合
+            // 敵スキルにパーティスタン効果
             if (sk_def.enemyStun > 0) {
               newPlayerStunTurns = Math.max(newPlayerStunTurns, sk_def.enemyStun);
               logs.push(`${e.def.em}${e.def.name} 🦵 パーティを${sk_def.enemyStun}T行動不能にした！`);
             }
-            // ── 敵スキルに回復効果がある場合 ──────────────────────────────
+            // 敵スキルに回復効果
             if (sk_def.healFlat > 0) {
               const healAmt = sk_def.healFlat;
               if (sk_def.healTarget === "party") {
-                // 全敵回復
                 let healLog = `${e.def.em}${e.def.name} ${sk_def.icon}${sk_def.label}！ 全敵HP+${healAmt}！`;
                 curEnemies.forEach((te, ti) => {
                   if (te.defeated) return;
@@ -3974,19 +4255,19 @@ export default function ArcadiaCh2() {
                 });
                 logs.push(healLog);
               } else {
-                // 自己回復
                 const eIdx = curEnemies.findIndex(te => te.slot === slot);
                 if (eIdx >= 0 && !curEnemies[eIdx].defeated) {
                   const before = curEnemies[eIdx].hp;
                   curEnemies[eIdx].hp = Math.min(curEnemies[eIdx].hp + healAmt, curEnemies[eIdx].def.maxHp);
                   const actual = curEnemies[eIdx].hp - before;
-                  logs.push(`${e.def.em}${e.def.name} ${sk_def.icon}${sk_def.label}！ HP+${actual}回復！（${curEnemies[eIdx].hp}/${curEnemies[eIdx].def.maxHp}）`);
+                  logs.push(`${e.def.em}${e.def.name} ${sk_def.icon}${sk_def.label}！ HP+${actual}回復！`);
                 }
               }
             }
           } else {
-            // 通常強攻：counter→反撃×1.5、dodge/atk→被弾
+            // ── 通常強攻 (atk)：単体回避判定キューへ ──────────────────────────
             if (tCounter) {
+              // カウンターで反撃
               const csk = BATTLE_SKILLS.find(s => s.id === "counter");
               const bd = Math.max(1, Math.round((randInt(csk.dmg[0], csk.dmg[1]) * 1.5 + (tid === "eltz" ? atkBonus : 0)) * comboAtkMult) - (e.def.pdef ?? 0));
               const eIdx = curEnemies.findIndex(en => en.slot === slot);
@@ -3995,13 +4276,31 @@ export default function ArcadiaCh2() {
               pendingHitFx.push({ slotIdx: eIdx, dmg: bd, type: "normal" });
               logs.push(`${tMember.icon}${tMember.name} 🔄カウンター成功！ → ${e.def.em}${e.def.name} ${bd}ダメージ（×1.5）！ ${tMember.name}は被弾を免れた！`);
             } else {
-              // dodge も atk も通常被弾
+              // 通常被弾 → 回避グリッドへ
               const d = Math.max(1, Math.round(randInt(e.def.atk[0], e.def.atk[1]) * totalMult) - getMemberDef(tid));
-              if (tid === "eltz") { curHp = Math.max(0, curHp - d); }
-              else { curPartyHp[tid] = Math.max(0, (curPartyHp[tid] ?? 0) - d); }
-              memberDmg[tid] = (memberDmg[tid] ?? 0) + d;
-              const dodgeLabel = tDodge ? "（回避しようとしたが直撃！）" : "";
-              logs.push(`${e.def.em}${rageLabel}⚔${e.def.name}！${halfLabel} ${tMember.icon}${tMember.name}に${d}ダメージ！${dodgeLabel}`);
+              const attackKey4 = `atk_${slot}`;
+              logs.push(`${e.def.em}${rageLabel}⚔${e.def.name}！${halfLabel} ${tMember.icon}${tMember.name} ─ 回避判定へ`);
+              const capturedTid2 = tid;
+              const capturedTMember2 = tMember;
+              pendingDodgeQueue.push({
+                memberId: capturedTid2,
+                allTargets: null,
+                collision: getDodgeCollision("atk"),
+                attackKey: attackKey4,
+                attackInfo: { enemyIcon: e.def.em, enemyName: e.def.name, actionId: "atk", isAll: false },
+                targetLabel: { icon: capturedTMember2.icon, name: capturedTMember2.name },
+                applyDamage: (resultMap) => {
+                  const dodged = resultMap[`${attackKey4}_${capturedTid2}`] ?? false;
+                  if (dodged) {
+                    logs.push(`${capturedTMember2.icon}${capturedTMember2.name} 💨 攻撃を回避！`);
+                  } else {
+                    if (capturedTid2 === "eltz") { curHp = Math.max(0, curHp - d); }
+                    else { curPartyHp[capturedTid2] = Math.max(0, (curPartyHp[capturedTid2] ?? 0) - d); }
+                    memberDmg[capturedTid2] = (memberDmg[capturedTid2] ?? 0) + d;
+                    logs.push(`${e.def.em}${rageLabel}⚔${e.def.name}！ ${capturedTMember2.icon}${capturedTMember2.name}に${d}ダメージ！`);
+                  }
+                },
+              });
             }
           }
           // turnIdx更新はアップデートフェイズで一括処理
@@ -4132,7 +4431,18 @@ export default function ArcadiaCh2() {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // コンボジャッジ
+    // 回避グリッドキュー処理
+    //   pendingDodgeQueue に要素があれば、UI表示→結果取得後に finalizeTurn を呼ぶ
+    //   なければそのまま finalizeTurn を実行
+    // ══════════════════════════════════════════════════════════════════
+    const finalizeTurn = (resultMap) => {
+      // 回避結果を元に各攻撃のダメージ適用クロージャを実行
+      for (const entry of pendingDodgeQueue) {
+        entry.applyDamage(resultMap);
+      }
+
+      // ══════════════════════════════════════════════════════════════════
+      // コンボジャッジ
     //   通常：全員無被弾 → 成立
     //   heal使用時（unavoidable含むターン）：被ダメ - 回復量 ≤ 0 で全員成立
     //   overheal使用時：被ダメージ合計 ≤ 回復量(80) なら成立（従来仕様維持）
@@ -4312,6 +4622,23 @@ export default function ArcadiaCh2() {
       setInputPhase("command");
       setCmdInputIdx(0);
     }
+    }; // finalizeTurn end
+
+    // キューがあればUIを起動、なければ即実行
+    if (pendingDodgeQueue.length > 0) {
+      dodgeResultMapRef.current = {};
+      resumeTurnRef.current = () => finalizeTurn(dodgeResultMapRef.current);
+      const first = pendingDodgeQueue[0];
+      setDodgeGridCollision(first.collision);
+      setDodgeGridSelected(null);
+      setDodgeGridSuccess(false);
+      setDodgeGridAttackInfo(first.attackInfo);
+      setDodgeGridTargetLabel(first.targetLabel);
+      setDodgeQueue(pendingDodgeQueue);
+      setDodgeGridPhase("select");
+    } else {
+      finalizeTurn({});
+    }
   }, [
     multiEnemies, hp, mp, mhp, mmp, partyHp, partyMhp, partyMp, partyMmp,
     statAlloc, weaponPatk, partySpdBuff, enemySpdDebuff, enrageCount, enemyAtkDebuff,
@@ -4319,7 +4646,9 @@ export default function ArcadiaCh2() {
     bikerAtkBonus, straightShotActive, waterSphereActive, slowbladeActive, memberCdMap,
     reverseActive, playerStunActive, enemyElementIdx,
     noDmgStreak, turn, lv, showNotif, handleExpGain,
-    fireHitEffect, fireDefeatEffect, playReverseEffect,playLightningEffect,
+    fireHitEffect, fireDefeatEffect, playReverseEffect, playLightningEffect,
+    setDodgeGridCollision, setDodgeGridSelected, setDodgeGridSuccess,
+    setDodgeGridAttackInfo, setDodgeGridTargetLabel, setDodgeQueue, setDodgeGridPhase,
   ]);
 
 
@@ -4518,8 +4847,8 @@ export default function ArcadiaCh2() {
     return (
       <div style={{background:C.bg,color:C.red,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",fontFamily:FONT_MONO,letterSpacing:2,fontSize:13,gap:16}}>
         <div>SCENARIO LOAD FAILED</div>
-        <div style={{fontSize:10,color:C.muted}}>scenes_ch3.json が取得できませんでした</div>
-        <div style={{fontSize:10,color:C.muted}}>{SCENES_CH3_URL}</div>
+        <div style={{fontSize:10,color:C.muted}}>scenes_ch2.json が取得できませんでした</div>
+        <div style={{fontSize:10,color:C.muted}}>{SCENES_CH2_URL}</div>
         <button onClick={()=>window.location.reload()} style={{marginTop:8,padding:"8px 24px",background:"transparent",border:`1px solid ${C.muted}`,color:C.muted,cursor:"pointer",fontFamily:FONT_MONO,letterSpacing:2}}>RETRY</button>
       </div>
     );
@@ -4839,8 +5168,8 @@ export default function ArcadiaCh2() {
   // ── ファイル読み込み処理 ──────────────────────────────────────────────────
   const validateSave = (obj) => {
     if (!obj || typeof obj !== "object")         return "JSONの形式が不正です";
-    if (!obj.version?.startsWith("arcadia_ch2"))  return "ARCADIAのセーブデータではありません";
-    if (obj.version?.startsWith("arcadia_ch3"))  return "第三章のセーブデータは第三章には引き継げません";
+    if (!obj.version?.startsWith("arcadia_ch"))  return "ARCADIAのセーブデータではありません";
+    if (obj.version?.startsWith("arcadia_ch2"))  return "第二章のセーブデータは第二章には引き継げません。第三章で読み込んでください。";
     if (!obj.player)                             return "player データが見つかりません";
     if (typeof obj.player.lv !== "number")       return "セーブデータが破損しています（lv）";
     return null;
@@ -5217,7 +5546,7 @@ export default function ArcadiaCh2() {
 
     // ── セーブデータ生成 ────────────────────────────────────────────────────
     const buildSaveData = () => ({
-      version:    "arcadia_ch3_v1",
+      version:    "arcadia_ch2_v1",
       chapter:    chapter,
       savedAt:    new Date().toISOString(),
       player: {
@@ -6412,7 +6741,226 @@ export default function ArcadiaCh2() {
               </div>
 
               {/* ── アクションボタン / スキルサブメニュー / 勝敗結果 ── */}
-              <div style={{flexShrink:0}}>
+              <div style={{flexShrink:0, position:"relative"}}>
+
+                {/* ── 回避グリッドUIオーバーレイ（自動発動・敵攻撃時） ── */}
+                {dodgeGridPhase !== null && (() => {
+                  const info = dodgeGridAttackInfo;
+                  const actionLabel = info ? getEnemyActionLabel(info.actionId) : { icon:"⚔", text:"攻撃" };
+                  const isAllCollision = dodgeGridCollision.length >= 9;
+                  const noCollision   = dodgeGridCollision.length === 0;
+                  const remaining = dodgeQueue.length;
+
+                  return (
+                    <div style={{
+                      position:"fixed",
+                      left:0, right:0, bottom:0,
+                      height:"52%",
+                      zIndex:200,
+                      background:"rgba(5,13,20,0.96)",
+                      backdropFilter:"blur(10px)",
+                      display:"flex", flexDirection:"column",
+                      alignItems:"center", justifyContent:"center",
+                      padding:"10px 8px",
+                      animation:"fadeIn 0.15s ease",
+                      borderTop: `2px solid ${C.accent}44`,
+                    }}>
+                      {/* ヘッダー：敵情報 */}
+                      <div style={{marginBottom:6, textAlign:"center"}}>
+                        <div style={{fontSize:8, color:C.muted, fontFamily:FONT_MONO, letterSpacing:3, marginBottom:2}}>
+                          DODGE ─ SELECT SAFE ZONE
+                          {remaining > 1 && <span style={{color:C.gold, marginLeft:6}}>[{remaining}件待ち]</span>}
+                        </div>
+                        <div style={{fontSize:12, fontFamily:FONT_MONO, letterSpacing:1, marginBottom:2}}>
+                          <span style={{color:"#ff4466", animation:"dngr 0.7s infinite", fontSize:14}}>
+                            {info?.enemyIcon ?? "⚔"} {info?.enemyName ?? "敵"}
+                          </span>
+                          <span style={{color:C.muted, margin:"0 4px"}}>の</span>
+                          <span style={{color:C.gold}}>{actionLabel.icon} {actionLabel.text}</span>
+                        </div>
+                        {/* 対象メンバー表示 */}
+                        <div style={{fontSize:10, fontFamily:FONT_MONO, color:C.accent}}>
+                          {info?.isAll
+                            ? "🌊 全員対象"
+                            : dodgeGridTargetLabel
+                              ? `→ ${dodgeGridTargetLabel.icon} ${dodgeGridTargetLabel.name} を狙う`
+                              : ""}
+                        </div>
+                      </div>
+
+                      {/* 3×3グリッド（ピクロスヒント付き） */}
+                      {(() => {
+                        const isResult = dodgeGridPhase === "result";
+                        // ピクロスヒント計算：行/列ごとの危険マス数
+                        // グリッド配置: 0=左上 1=上 2=右上 / 3=左 4=中 5=右 / 6=左下 7=下 8=右下
+                        const rowHits = [0,1,2].map(r => [0,1,2].filter(c => dodgeGridCollision.includes(r*3+c)).length);
+                        const colHits = [0,1,2].map(c => [0,1,2].filter(r => dodgeGridCollision.includes(r*3+c)).length);
+                        const HINT_SAFE  = { color:"#00ffcc", fontSize:9, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
+                        const HINT_DNGR  = { color:"#ff4466", fontSize:9, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
+                        const HINT_ALL   = { color:"#4a7a9a", fontSize:9, fontFamily:FONT_MONO, letterSpacing:0 };
+                        const CELL_SIZE  = "min(60px, 19vw)";
+                        const HINT_SIZE  = "min(20px, 6vw)";
+                        const GAP        = 3;
+
+                        const hintStyle = (hits, total=3) => {
+                          if (isResult) return HINT_ALL;
+                          if (hits === 0)     return HINT_SAFE;   // 列/行すべて安全
+                          if (hits === total) return HINT_DNGR;   // 列/行すべて危険
+                          return { ...HINT_ALL, color:"#c8a84a" }; // 混在
+                        };
+
+                        return (
+                          <div style={{ marginBottom:6 }}>
+                            {/* 列ヒント（上段） */}
+                            <div style={{ display:"flex", alignItems:"center", marginBottom:GAP, paddingLeft:`calc(${HINT_SIZE} + ${GAP}px)` }}>
+                              {[0,1,2].map(c => (
+                                <div key={c} style={{
+                                  width:CELL_SIZE, display:"flex", alignItems:"center", justifyContent:"center",
+                                  ...(c < 2 ? { marginRight:GAP } : {}),
+                                }}>
+                                  {noCollision
+                                    ? <span style={HINT_SAFE}>✓</span>
+                                    : isAllCollision
+                                    ? <span style={HINT_DNGR}>✕</span>
+                                    : <span style={hintStyle(colHits[c])}>{colHits[c]}</span>
+                                  }
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* 行（行ヒント＋セル） */}
+                            {[0,1,2].map(r => (
+                              <div key={r} style={{ display:"flex", alignItems:"center", ...(r < 2 ? { marginBottom:GAP } : {}) }}>
+                                {/* 行ヒント */}
+                                <div style={{
+                                  width:HINT_SIZE, marginRight:GAP,
+                                  display:"flex", alignItems:"center", justifyContent:"center",
+                                }}>
+                                  {noCollision
+                                    ? <span style={HINT_SAFE}>✓</span>
+                                    : isAllCollision
+                                    ? <span style={HINT_DNGR}>✕</span>
+                                    : <span style={hintStyle(rowHits[r])}>{rowHits[r]}</span>
+                                  }
+                                </div>
+
+                                {/* セル × 3 */}
+                                {[0,1,2].map(c => {
+                                  const idx = r*3 + c;
+                                  const isCollision = dodgeGridCollision.includes(idx);
+                                  const isSelected  = dodgeGridSelected === idx;
+                                  let bg, border, content, glow = "none";
+
+                                  if (isResult) {
+                                    if (isCollision) {
+                                      bg     = "rgba(255,40,80,0.28)";
+                                      border = "1px solid #ff446699";
+                                      glow   = "0 0 10px #ff446655";
+                                      content = <span style={{fontSize:15}}>💥</span>;
+                                    } else {
+                                      bg     = "rgba(0,255,160,0.10)";
+                                      border = "1px solid #00ffcc44";
+                                      content = null;
+                                    }
+                                    if (isSelected) {
+                                      if (dodgeGridSuccess) {
+                                        bg      = "rgba(0,255,160,0.38)";
+                                        border  = "2px solid #00ffcc";
+                                        glow    = "0 0 16px #00ffcc99";
+                                        content = <span style={{fontSize:18, animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)"}}>✨</span>;
+                                      } else {
+                                        bg      = "rgba(255,40,80,0.48)";
+                                        border  = "2px solid #ff4466";
+                                        glow    = "0 0 16px #ff446699";
+                                        content = <span style={{fontSize:18}}>💀</span>;
+                                      }
+                                    }
+                                  } else {
+                                    bg      = "rgba(26,74,106,0.30)";
+                                    border  = `1px solid ${C.border}`;
+                                    content = null;
+                                  }
+
+                                  return (
+                                    <button
+                                      key={idx}
+                                      disabled={isResult}
+                                      onClick={() => dodgeGridPhase === "select" && onConfirmDodgeGrid(idx)}
+                                      style={{
+                                        width:CELL_SIZE, height:CELL_SIZE,
+                                        background: bg, border, borderRadius:6,
+                                        cursor: isResult ? "default" : "pointer",
+                                        display:"flex", alignItems:"center", justifyContent:"center",
+                                        boxShadow: glow,
+                                        transition:"background 0.12s, border 0.12s, box-shadow 0.12s",
+                                        position:"relative", overflow:"hidden",
+                                        ...(c < 2 ? { marginRight:GAP } : {}),
+                                      }}
+                                      onMouseEnter={e => {
+                                        if (isResult) return;
+                                        e.currentTarget.style.background = "rgba(0,200,255,0.20)";
+                                        e.currentTarget.style.border     = `1px solid ${C.accent}`;
+                                      }}
+                                      onMouseLeave={e => {
+                                        if (isResult) return;
+                                        e.currentTarget.style.background = "rgba(26,74,106,0.30)";
+                                        e.currentTarget.style.border     = `1px solid ${C.border}`;
+                                      }}
+                                    >
+                                      {!isResult && (
+                                        <div style={{
+                                          position:"absolute", inset:0,
+                                          backgroundImage:"linear-gradient(135deg, rgba(0,200,255,0.03) 0%, transparent 100%)",
+                                          borderRadius:6, pointerEvents:"none",
+                                        }}/>
+                                      )}
+                                      {content}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
+                      {/* フッター */}
+                      {dodgeGridPhase === "select" && (
+                        <div style={{textAlign:"center"}}>
+                          <div style={{fontSize:9, color:C.muted, fontFamily:FONT_MONO, letterSpacing:2, marginBottom:4}}>
+                            {noCollision
+                              ? "💨 全てのマスが安全！"
+                              : isAllCollision
+                              ? "💥 回避不能！どこを選んでも被弾する"
+                              : `安全ゾーン ${9 - dodgeGridCollision.length} / 9 マス`}
+                          </div>
+                          {/* 制限時間カウントダウン */}
+                          <div style={{
+                            fontSize: dodgeTimeLeft <= 2 ? 16 : 13,
+                            fontFamily: FONT_MONO,
+                            fontWeight: 700,
+                            letterSpacing: 2,
+                            color: dodgeTimeLeft <= 2 ? "#ff4466" : dodgeTimeLeft <= 3 ? "#c8a84a" : C.accent,
+                            animation: dodgeTimeLeft <= 2 ? "dngr 0.5s infinite" : undefined,
+                            transition: "color 0.3s, font-size 0.2s",
+                          }}>
+                            ⏱ {dodgeTimeLeft}
+                          </div>
+                        </div>
+                      )}
+                      {dodgeGridPhase === "result" && (
+                        <div style={{
+                          fontSize:13, fontFamily:FONT_MONO, letterSpacing:3,
+                          color: dodgeGridSuccess ? C.accent2 : C.red,
+                          fontWeight:700,
+                          animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)",
+                        }}>
+                          {dodgeGridSuccess ? "✅ DODGE SUCCESS！" : "❌ DODGE FAILED"}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {!victory && !defeat ? (
                   <div>
                     {/* ── SPD比較（1行） ── */}
@@ -6570,11 +7118,11 @@ export default function ArcadiaCh2() {
                         {(() => {
                           const BASE_IDS = ["atk","counter","dodge","heal"];
                           const hasSubSkills = currentCmdMember.skills.some(id => !BASE_IDS.includes(id));
-                          const totalCols = 4 + (hasSubSkills ? 1 : 0);
+                          const totalCols = 3 + (hasSubSkills ? 1 : 0); // dodge除去で3列基準
                           const gtc = Array(totalCols).fill("1fr").join(" ");
                           return (
                         <div style={{display:"grid",gridTemplateColumns:gtc,gap:3,marginBottom:3}}>
-                          {BATTLE_SKILLS.map(sk => {
+                          {BATTLE_SKILLS.filter(sk => sk.id !== "dodge").map(sk => {
                             const memberMp = currentCmdMember.id === "eltz" ? mp : (partyMp[currentCmdMember.id] ?? 0);
                             const canAfford = sk.cost === 0 || memberMp >= sk.cost;
                             const disabled = inputPhase !== "command";
