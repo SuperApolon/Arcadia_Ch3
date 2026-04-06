@@ -6643,7 +6643,219 @@ export default function ArcadiaCh2() {
             borderLeft: isPortrait ? "none" : `1px solid ${C.border}44`,
             borderTop:  isPortrait ? `1px solid ${C.border}44` : "none",
             overflow:"hidden",
+            position:"relative",
           }}>
+
+            {/* ── 回避グリッドUI（右カラム全体を覆うオーバーレイ） ── */}
+            {dodgeGridPhase !== null && (() => {
+              const info = dodgeGridAttackInfo;
+              const actionLabel = info ? getEnemyActionLabel(info.actionId) : { icon:"⚔", text:"攻撃" };
+              const isAllCollision = dodgeGridCollision.length >= 9;
+              const noCollision   = dodgeGridCollision.length === 0;
+              const remaining = dodgeQueue.length;
+
+              return (
+                <div style={{
+                  position:"absolute",
+                  inset:0,
+                  zIndex:200,
+                  background:"rgba(5,13,20,0.97)",
+                  backdropFilter:"blur(10px)",
+                  display:"flex", flexDirection:"column",
+                  alignItems:"center", justifyContent:"center",
+                  padding:"16px 12px",
+                  animation:"fadeIn 0.15s ease",
+                  borderTop: `2px solid ${C.accent}44`,
+                  overflowY:"auto",
+                }}>
+                  {/* ヘッダー：敵情報 */}
+                  <div style={{marginBottom:10, textAlign:"center"}}>
+                    <div style={{fontSize:9, color:C.muted, fontFamily:FONT_MONO, letterSpacing:3, marginBottom:3}}>
+                      DODGE ─ SELECT SAFE ZONE
+                      {remaining > 1 && <span style={{color:C.gold, marginLeft:6}}>[{remaining}件待ち]</span>}
+                    </div>
+                    <div style={{fontSize:13, fontFamily:FONT_MONO, letterSpacing:1, marginBottom:3}}>
+                      <span style={{color:"#ff4466", animation:"dngr 0.7s infinite", fontSize:15}}>
+                        {info?.enemyIcon ?? "⚔"} {info?.enemyName ?? "敵"}
+                      </span>
+                      <span style={{color:C.muted, margin:"0 4px"}}>の</span>
+                      <span style={{color:C.gold}}>{actionLabel.icon} {actionLabel.text}</span>
+                    </div>
+                    <div style={{fontSize:11, fontFamily:FONT_MONO, color:C.accent}}>
+                      {info?.isAll
+                        ? "🌊 全員対象"
+                        : dodgeGridTargetLabel
+                          ? `→ ${dodgeGridTargetLabel.icon} ${dodgeGridTargetLabel.name} を狙う`
+                          : ""}
+                    </div>
+                  </div>
+
+                  {/* 3×3グリッド（ピクロスヒント付き） */}
+                  {(() => {
+                    const isResult = dodgeGridPhase === "result";
+                    const rowHits = [0,1,2].map(r => [0,1,2].filter(c => dodgeGridCollision.includes(r*3+c)).length);
+                    const colHits = [0,1,2].map(c => [0,1,2].filter(r => dodgeGridCollision.includes(r*3+c)).length);
+                    const HINT_SAFE  = { color:"#00ffcc", fontSize:11, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
+                    const HINT_DNGR  = { color:"#ff4466", fontSize:11, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
+                    const HINT_ALL   = { color:"#4a7a9a", fontSize:11, fontFamily:FONT_MONO, letterSpacing:0 };
+                    const CELL_SIZE  = "min(64px, 7vw)";
+                    const HINT_SIZE  = "min(24px, 2.5vw)";
+                    const GAP        = 5;
+
+                    const hintStyle = (hits, total=3) => {
+                      if (isResult) return HINT_ALL;
+                      if (hits === 0)     return HINT_SAFE;
+                      if (hits === total) return HINT_DNGR;
+                      return { ...HINT_ALL, color:"#c8a84a" };
+                    };
+
+                    return (
+                      <div style={{ marginBottom:10 }}>
+                        <div style={{ display:"flex", alignItems:"center", marginBottom:GAP, paddingLeft:`calc(${HINT_SIZE} + ${GAP}px)` }}>
+                          {[0,1,2].map(c => (
+                            <div key={c} style={{
+                              width:CELL_SIZE, display:"flex", alignItems:"center", justifyContent:"center",
+                              ...(c < 2 ? { marginRight:GAP } : {}),
+                            }}>
+                              {noCollision
+                                ? <span style={HINT_SAFE}>✓</span>
+                                : isAllCollision
+                                ? <span style={HINT_DNGR}>✕</span>
+                                : <span style={hintStyle(colHits[c])}>{colHits[c]}</span>
+                              }
+                            </div>
+                          ))}
+                        </div>
+
+                        {[0,1,2].map(r => (
+                          <div key={r} style={{ display:"flex", alignItems:"center", ...(r < 2 ? { marginBottom:GAP } : {}) }}>
+                            <div style={{
+                              width:HINT_SIZE, marginRight:GAP,
+                              display:"flex", alignItems:"center", justifyContent:"center",
+                            }}>
+                              {noCollision
+                                ? <span style={HINT_SAFE}>✓</span>
+                                : isAllCollision
+                                ? <span style={HINT_DNGR}>✕</span>
+                                : <span style={hintStyle(rowHits[r])}>{rowHits[r]}</span>
+                              }
+                            </div>
+
+                            {[0,1,2].map(c => {
+                              const idx = r*3 + c;
+                              const isCollision = dodgeGridCollision.includes(idx);
+                              const isSelected  = dodgeGridSelected === idx;
+                              let bg, border, content, glow = "none";
+
+                              if (isResult) {
+                                if (isCollision) {
+                                  bg      = "rgba(255,40,80,0.28)";
+                                  border  = "1px solid #ff446699";
+                                  glow    = "0 0 10px #ff446655";
+                                  content = <span style={{fontSize:20}}>💥</span>;
+                                } else {
+                                  bg      = "rgba(0,255,160,0.10)";
+                                  border  = "1px solid #00ffcc44";
+                                  content = null;
+                                }
+                                if (isSelected) {
+                                  if (dodgeGridSuccess) {
+                                    bg      = "rgba(0,255,160,0.38)";
+                                    border  = "2px solid #00ffcc";
+                                    glow    = "0 0 16px #00ffcc99";
+                                    content = <span style={{fontSize:24, animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)"}}>✨</span>;
+                                  } else {
+                                    bg      = "rgba(255,40,80,0.48)";
+                                    border  = "2px solid #ff4466";
+                                    glow    = "0 0 16px #ff446699";
+                                    content = <span style={{fontSize:24}}>💀</span>;
+                                  }
+                                }
+                              } else {
+                                bg      = "rgba(26,74,106,0.30)";
+                                border  = `1px solid ${C.border}`;
+                                content = null;
+                              }
+
+                              return (
+                                <button
+                                  key={idx}
+                                  disabled={isResult}
+                                  onClick={() => dodgeGridPhase === "select" && onConfirmDodgeGrid(idx)}
+                                  style={{
+                                    width:CELL_SIZE, height:CELL_SIZE,
+                                    background: bg, border, borderRadius:8,
+                                    cursor: isResult ? "default" : "pointer",
+                                    display:"flex", alignItems:"center", justifyContent:"center",
+                                    boxShadow: glow,
+                                    transition:"background 0.12s, border 0.12s, box-shadow 0.12s",
+                                    position:"relative", overflow:"hidden",
+                                    ...(c < 2 ? { marginRight:GAP } : {}),
+                                  }}
+                                  onMouseEnter={e => {
+                                    if (isResult) return;
+                                    e.currentTarget.style.background = "rgba(0,200,255,0.20)";
+                                    e.currentTarget.style.border     = `1px solid ${C.accent}`;
+                                  }}
+                                  onMouseLeave={e => {
+                                    if (isResult) return;
+                                    e.currentTarget.style.background = "rgba(26,74,106,0.30)";
+                                    e.currentTarget.style.border     = `1px solid ${C.border}`;
+                                  }}
+                                >
+                                  {!isResult && (
+                                    <div style={{
+                                      position:"absolute", inset:0,
+                                      backgroundImage:"linear-gradient(135deg, rgba(0,200,255,0.03) 0%, transparent 100%)",
+                                      borderRadius:8, pointerEvents:"none",
+                                    }}/>
+                                  )}
+                                  {content}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
+                  {/* フッター */}
+                  {dodgeGridPhase === "select" && (
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:10, color:C.muted, fontFamily:FONT_MONO, letterSpacing:2, marginBottom:6}}>
+                        {noCollision
+                          ? "💨 全てのマスが安全！"
+                          : isAllCollision
+                          ? "💥 回避不能！どこを選んでも被弾する"
+                          : `安全ゾーン ${9 - dodgeGridCollision.length} / 9 マス`}
+                      </div>
+                      <div style={{
+                        fontSize: dodgeTimeLeft <= 2 ? 20 : 16,
+                        fontFamily: FONT_MONO,
+                        fontWeight: 700,
+                        letterSpacing: 2,
+                        color: dodgeTimeLeft <= 2 ? "#ff4466" : dodgeTimeLeft <= 3 ? "#c8a84a" : C.accent,
+                        animation: dodgeTimeLeft <= 2 ? "dngr 0.5s infinite" : undefined,
+                        transition: "color 0.3s, font-size 0.2s",
+                      }}>
+                        ⏱ {dodgeTimeLeft}
+                      </div>
+                    </div>
+                  )}
+                  {dodgeGridPhase === "result" && (
+                    <div style={{
+                      fontSize:15, fontFamily:FONT_MONO, letterSpacing:3,
+                      color: dodgeGridSuccess ? C.accent2 : C.red,
+                      fontWeight:700,
+                      animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)",
+                    }}>
+                      {dodgeGridSuccess ? "✅ DODGE SUCCESS！" : "❌ DODGE FAILED"}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* すくみガイド */}
             <div style={{padding:"3px 8px",borderBottom:`1px solid ${C.border}33`,display:"flex",gap:6,flexWrap:"wrap",justifyContent:"center",flexShrink:0}}>
@@ -6743,224 +6955,6 @@ export default function ArcadiaCh2() {
               {/* ── アクションボタン / スキルサブメニュー / 勝敗結果 ── */}
               <div style={{flexShrink:0, position:"relative"}}>
 
-                {/* ── 回避グリッドUIオーバーレイ（自動発動・敵攻撃時） ── */}
-                {dodgeGridPhase !== null && (() => {
-                  const info = dodgeGridAttackInfo;
-                  const actionLabel = info ? getEnemyActionLabel(info.actionId) : { icon:"⚔", text:"攻撃" };
-                  const isAllCollision = dodgeGridCollision.length >= 9;
-                  const noCollision   = dodgeGridCollision.length === 0;
-                  const remaining = dodgeQueue.length;
-
-                  return (
-                    <div style={{
-                      position:"fixed",
-                      left:0, right:0, bottom:0,
-                      height:"52%",
-                      zIndex:200,
-                      background:"rgba(5,13,20,0.96)",
-                      backdropFilter:"blur(10px)",
-                      display:"flex", flexDirection:"column",
-                      alignItems:"center", justifyContent:"center",
-                      padding:"10px 8px",
-                      animation:"fadeIn 0.15s ease",
-                      borderTop: `2px solid ${C.accent}44`,
-                    }}>
-                      {/* ヘッダー：敵情報 */}
-                      <div style={{marginBottom:6, textAlign:"center"}}>
-                        <div style={{fontSize:8, color:C.muted, fontFamily:FONT_MONO, letterSpacing:3, marginBottom:2}}>
-                          DODGE ─ SELECT SAFE ZONE
-                          {remaining > 1 && <span style={{color:C.gold, marginLeft:6}}>[{remaining}件待ち]</span>}
-                        </div>
-                        <div style={{fontSize:12, fontFamily:FONT_MONO, letterSpacing:1, marginBottom:2}}>
-                          <span style={{color:"#ff4466", animation:"dngr 0.7s infinite", fontSize:14}}>
-                            {info?.enemyIcon ?? "⚔"} {info?.enemyName ?? "敵"}
-                          </span>
-                          <span style={{color:C.muted, margin:"0 4px"}}>の</span>
-                          <span style={{color:C.gold}}>{actionLabel.icon} {actionLabel.text}</span>
-                        </div>
-                        {/* 対象メンバー表示 */}
-                        <div style={{fontSize:10, fontFamily:FONT_MONO, color:C.accent}}>
-                          {info?.isAll
-                            ? "🌊 全員対象"
-                            : dodgeGridTargetLabel
-                              ? `→ ${dodgeGridTargetLabel.icon} ${dodgeGridTargetLabel.name} を狙う`
-                              : ""}
-                        </div>
-                      </div>
-
-                      {/* 3×3グリッド（ピクロスヒント付き） */}
-                      {(() => {
-                        const isResult = dodgeGridPhase === "result";
-                        // ピクロスヒント計算：行/列ごとの危険マス数
-                        // グリッド配置: 0=左上 1=上 2=右上 / 3=左 4=中 5=右 / 6=左下 7=下 8=右下
-                        const rowHits = [0,1,2].map(r => [0,1,2].filter(c => dodgeGridCollision.includes(r*3+c)).length);
-                        const colHits = [0,1,2].map(c => [0,1,2].filter(r => dodgeGridCollision.includes(r*3+c)).length);
-                        const HINT_SAFE  = { color:"#00ffcc", fontSize:9, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
-                        const HINT_DNGR  = { color:"#ff4466", fontSize:9, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
-                        const HINT_ALL   = { color:"#4a7a9a", fontSize:9, fontFamily:FONT_MONO, letterSpacing:0 };
-                        const CELL_SIZE  = "min(60px, 19vw)";
-                        const HINT_SIZE  = "min(20px, 6vw)";
-                        const GAP        = 3;
-
-                        const hintStyle = (hits, total=3) => {
-                          if (isResult) return HINT_ALL;
-                          if (hits === 0)     return HINT_SAFE;   // 列/行すべて安全
-                          if (hits === total) return HINT_DNGR;   // 列/行すべて危険
-                          return { ...HINT_ALL, color:"#c8a84a" }; // 混在
-                        };
-
-                        return (
-                          <div style={{ marginBottom:6 }}>
-                            {/* 列ヒント（上段） */}
-                            <div style={{ display:"flex", alignItems:"center", marginBottom:GAP, paddingLeft:`calc(${HINT_SIZE} + ${GAP}px)` }}>
-                              {[0,1,2].map(c => (
-                                <div key={c} style={{
-                                  width:CELL_SIZE, display:"flex", alignItems:"center", justifyContent:"center",
-                                  ...(c < 2 ? { marginRight:GAP } : {}),
-                                }}>
-                                  {noCollision
-                                    ? <span style={HINT_SAFE}>✓</span>
-                                    : isAllCollision
-                                    ? <span style={HINT_DNGR}>✕</span>
-                                    : <span style={hintStyle(colHits[c])}>{colHits[c]}</span>
-                                  }
-                                </div>
-                              ))}
-                            </div>
-
-                            {/* 行（行ヒント＋セル） */}
-                            {[0,1,2].map(r => (
-                              <div key={r} style={{ display:"flex", alignItems:"center", ...(r < 2 ? { marginBottom:GAP } : {}) }}>
-                                {/* 行ヒント */}
-                                <div style={{
-                                  width:HINT_SIZE, marginRight:GAP,
-                                  display:"flex", alignItems:"center", justifyContent:"center",
-                                }}>
-                                  {noCollision
-                                    ? <span style={HINT_SAFE}>✓</span>
-                                    : isAllCollision
-                                    ? <span style={HINT_DNGR}>✕</span>
-                                    : <span style={hintStyle(rowHits[r])}>{rowHits[r]}</span>
-                                  }
-                                </div>
-
-                                {/* セル × 3 */}
-                                {[0,1,2].map(c => {
-                                  const idx = r*3 + c;
-                                  const isCollision = dodgeGridCollision.includes(idx);
-                                  const isSelected  = dodgeGridSelected === idx;
-                                  let bg, border, content, glow = "none";
-
-                                  if (isResult) {
-                                    if (isCollision) {
-                                      bg     = "rgba(255,40,80,0.28)";
-                                      border = "1px solid #ff446699";
-                                      glow   = "0 0 10px #ff446655";
-                                      content = <span style={{fontSize:15}}>💥</span>;
-                                    } else {
-                                      bg     = "rgba(0,255,160,0.10)";
-                                      border = "1px solid #00ffcc44";
-                                      content = null;
-                                    }
-                                    if (isSelected) {
-                                      if (dodgeGridSuccess) {
-                                        bg      = "rgba(0,255,160,0.38)";
-                                        border  = "2px solid #00ffcc";
-                                        glow    = "0 0 16px #00ffcc99";
-                                        content = <span style={{fontSize:18, animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)"}}>✨</span>;
-                                      } else {
-                                        bg      = "rgba(255,40,80,0.48)";
-                                        border  = "2px solid #ff4466";
-                                        glow    = "0 0 16px #ff446699";
-                                        content = <span style={{fontSize:18}}>💀</span>;
-                                      }
-                                    }
-                                  } else {
-                                    bg      = "rgba(26,74,106,0.30)";
-                                    border  = `1px solid ${C.border}`;
-                                    content = null;
-                                  }
-
-                                  return (
-                                    <button
-                                      key={idx}
-                                      disabled={isResult}
-                                      onClick={() => dodgeGridPhase === "select" && onConfirmDodgeGrid(idx)}
-                                      style={{
-                                        width:CELL_SIZE, height:CELL_SIZE,
-                                        background: bg, border, borderRadius:6,
-                                        cursor: isResult ? "default" : "pointer",
-                                        display:"flex", alignItems:"center", justifyContent:"center",
-                                        boxShadow: glow,
-                                        transition:"background 0.12s, border 0.12s, box-shadow 0.12s",
-                                        position:"relative", overflow:"hidden",
-                                        ...(c < 2 ? { marginRight:GAP } : {}),
-                                      }}
-                                      onMouseEnter={e => {
-                                        if (isResult) return;
-                                        e.currentTarget.style.background = "rgba(0,200,255,0.20)";
-                                        e.currentTarget.style.border     = `1px solid ${C.accent}`;
-                                      }}
-                                      onMouseLeave={e => {
-                                        if (isResult) return;
-                                        e.currentTarget.style.background = "rgba(26,74,106,0.30)";
-                                        e.currentTarget.style.border     = `1px solid ${C.border}`;
-                                      }}
-                                    >
-                                      {!isResult && (
-                                        <div style={{
-                                          position:"absolute", inset:0,
-                                          backgroundImage:"linear-gradient(135deg, rgba(0,200,255,0.03) 0%, transparent 100%)",
-                                          borderRadius:6, pointerEvents:"none",
-                                        }}/>
-                                      )}
-                                      {content}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })()}
-
-                      {/* フッター */}
-                      {dodgeGridPhase === "select" && (
-                        <div style={{textAlign:"center"}}>
-                          <div style={{fontSize:9, color:C.muted, fontFamily:FONT_MONO, letterSpacing:2, marginBottom:4}}>
-                            {noCollision
-                              ? "💨 全てのマスが安全！"
-                              : isAllCollision
-                              ? "💥 回避不能！どこを選んでも被弾する"
-                              : `安全ゾーン ${9 - dodgeGridCollision.length} / 9 マス`}
-                          </div>
-                          {/* 制限時間カウントダウン */}
-                          <div style={{
-                            fontSize: dodgeTimeLeft <= 2 ? 16 : 13,
-                            fontFamily: FONT_MONO,
-                            fontWeight: 700,
-                            letterSpacing: 2,
-                            color: dodgeTimeLeft <= 2 ? "#ff4466" : dodgeTimeLeft <= 3 ? "#c8a84a" : C.accent,
-                            animation: dodgeTimeLeft <= 2 ? "dngr 0.5s infinite" : undefined,
-                            transition: "color 0.3s, font-size 0.2s",
-                          }}>
-                            ⏱ {dodgeTimeLeft}
-                          </div>
-                        </div>
-                      )}
-                      {dodgeGridPhase === "result" && (
-                        <div style={{
-                          fontSize:13, fontFamily:FONT_MONO, letterSpacing:3,
-                          color: dodgeGridSuccess ? C.accent2 : C.red,
-                          fontWeight:700,
-                          animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)",
-                        }}>
-                          {dodgeGridSuccess ? "✅ DODGE SUCCESS！" : "❌ DODGE FAILED"}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
                 {!victory && !defeat ? (
                   <div>
                     {/* ── SPD比較（1行） ── */}
