@@ -283,35 +283,36 @@ const C = {
 // sceneId が一致しない場合は "default" の値が使われます
 const BATTLE_RHYTHM_MAP = {
   // ─── デフォルト ───────────────────────────────────────────────
-  "default":           { notes:  8, bpm: 120 },
+  "default":           { notes: 8,  bpm: 120, noteOptions: { allowChord: true,  allowHold: false, allowSixteenth: false } },
 
   // ─── 第一章 ──────────────────────────────────────────────────
-  "seagull":           { notes:  8, bpm: 110 },
-  "shamerlot":         { notes:  8, bpm: 115 },
-  "shamerlot_lv3":     { notes: 10, bpm: 120 },
-  "shamerlot_lv5":     { notes: 12, bpm: 125 },
+  "seagull":           { notes: 8,  bpm: 110, noteOptions: { allowChord: true,  allowHold: false, allowSixteenth: false } },
+  "shamerlot":         { notes: 8,  bpm: 115, noteOptions: { allowChord: true,  allowHold: false, allowSixteenth: false } },
+  "shamerlot_lv3":     { notes: 10, bpm: 120, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: false } },
+  "shamerlot_lv5":     { notes: 12, bpm: 125, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: true  } },
 
   // ─── 第二章 ──────────────────────────────────────────────────
-  "woopy":             { notes:  8, bpm: 115 },
-  "moocat":            { notes: 12, bpm: 200 },
-  "mandragora":        { notes: 8, bpm: 60 },
-  "cocatris":          { notes: 10, bpm: 120 },
-  "cocatris_karma_a":  { notes: 18, bpm: 115 },
-  "cocatris_karma_b":  { notes: 18, bpm: 115 },
-  "cocatris_karma_c":  { notes: 18, bpm: 115 },
-  "cocatris_ponki_a":  { notes: 24, bpm: 120 },
-  "cocatris_ponki_b":  { notes: 24, bpm: 120 },
-  "cocatris_ponki_c":  { notes: 24, bpm: 120 },
+  "woopy":             { notes: 8,  bpm: 115, noteOptions: { allowChord: false, allowHold: false, allowSixteenth: false } },
+  "moocat":            { notes: 12, bpm: 200, noteOptions: { allowChord: false, allowHold: false, allowSixteenth: true  } },
+  "mandragora":        { notes: 8,  bpm: 60,  noteOptions: { allowChord: false, allowHold: true,  allowSixteenth: false } },
+  "cocatris":          { notes: 10, bpm: 120, noteOptions: { allowChord: true,  allowHold: false, allowSixteenth: false } },
+  "cocatris_karma_a":  { notes: 18, bpm: 115, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: false } },
+  "cocatris_karma_b":  { notes: 18, bpm: 115, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: false } },
+  "cocatris_karma_c":  { notes: 18, bpm: 115, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: false } },
+  "cocatris_ponki_a":  { notes: 24, bpm: 120, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: true  } },
+  "cocatris_ponki_b":  { notes: 24, bpm: 120, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: true  } },
+  "cocatris_ponki_c":  { notes: 24, bpm: 120, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: true  } },
 
   // ─── PVP ─────────────────────────────────────────────────────
-  "pvp_donatello":     { notes: 36, bpm: 132 },
-  "pvp_kevin":         { notes: 36, bpm: 132 },
-  "pvp_chopper":       { notes: 36, bpm: 132 },
+  "pvp_donatello":     { notes: 36, bpm: 132, noteOptions: { allowChord: false,  allowHold: false,  allowSixteenth: false  } },
+  "pvp_kevin":         { notes: 36, bpm: 132, noteOptions: { allowChord: false,  allowHold: false,  allowSixteenth: false  } },
+  "pvp_chopper":       { notes: 36, bpm: 132, noteOptions: { allowChord: false,  allowHold: false,  allowSixteenth: false } },
 
   // ─── ボス ────────────────────────────────────────────────────
-  "olga":              { notes: 64, bpm: 240 },
-  "olga_pet":          { notes: 64, bpm: 240 },
+  "olga":              { notes: 64, bpm: 240, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: true  } },
+  "olga_pet":          { notes: 64, bpm: 240, noteOptions: { allowChord: true,  allowHold: true,  allowSixteenth: true  } },
 };
+  
 // ─────────────────────────────────────────────────────【編集ガイド】
 //   敵のパターンを変えたいとき → 各エネミーの pattern: [...] だけ書き換える
 //   使える行動ID:
@@ -1927,83 +1928,104 @@ const LOC_TO_SCENE_IMG = {
 // ============================================================
 
 // 位置ベース判定ウィンドウ（%単位、TARGET_PCTからの距離）
-const RHYTHM_PERFECT_WINDOW_PCT = 7;   // PERFECT判定幅（±7%）
-const RHYTHM_GOOD_WINDOW_PCT    = 15;  // GOOD判定幅（±15%）
+// ============================================================
+// @@SECTION:RHYTHM_GAME ── リズムゲームコンポーネント（ホールド対応版）
+// ============================================================
+// pct < 50  → MISS  pct 50-79 → HIT  pct 80-99 → PIERCE  pct>=100 → CRITICAL
+// noteOptions（BATTLE_RHYTHM_MAP から渡す）:
+//   allowChord     : 同時押し生成を許可するか
+//   allowHold      : ホールド音符を生成するか
+//   allowSixteenth : 16分音符を使用するか
+// ============================================================
 
-function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
+const RHYTHM_PERFECT_WINDOW_PCT = 7;
+const RHYTHM_GOOD_WINDOW_PCT    = 15;
+
+function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, noteOptions = {}, onComplete }) {
+  const {
+    allowChord     = true,
+    allowHold      = false,
+    allowSixteenth = false,
+  } = noteOptions;
+
   const BEAT_MS      = Math.round(60000 / bpm);
   const TRAVEL_BEATS = 4;
   const TRAVEL_MS    = BEAT_MS * TRAVEL_BEATS;
-  const TARGET_PCT   = 72; // アイコンの上端位置（%）
+  const TARGET_PCT   = 72;
+  // ホールド最大拍数: BPMが速い場合は短め (最大2小節=8拍 / bpmが遅い場合は4拍上限)
+  const MAX_HOLD_BEATS = bpm >= 160 ? 2 : bpm >= 100 ? 4 : 8;
 
   const [gameNotes] = React.useState(() => {
-    // ── 音価テーブル（拍数）────────────────────────────────────────
-    // 1分音符=4拍, 2分=2拍, 4分=1拍, 8分=0.5拍, 16分=0.25拍
-    const NOTE_VALUES = [
-      { beats: 4,    weight: 1  },  // 1分音符（間が大きく空く）
-      { beats: 2,    weight: 3  },  // 2分音符
-      { beats: 1,    weight: 8  },  // 4分音符（基本）
-      { beats: 0.5,  weight: 6  },  // 8分音符
-      { beats: 0.25, weight: 3  },  // 16分音符（連符）
+    // ── 音価テーブル ───────────────────────────────────────────
+    const NOTE_VALUES_BASE = [
+      { beats: 4,   weight: 1  },
+      { beats: 2,   weight: 3  },
+      { beats: 1,   weight: 8  },
+      { beats: 0.5, weight: 6  },
     ];
-    const totalWeight = NOTE_VALUES.reduce((s, v) => s + v.weight, 0);
-  
-    // 重み付きランダムで音価を1つ選ぶ
+    if (allowSixteenth) NOTE_VALUES_BASE.push({ beats: 0.25, weight: 3 });
+    const totalWeight = NOTE_VALUES_BASE.reduce((s, v) => s + v.weight, 0);
     const pickValue = () => {
       let r = Math.random() * totalWeight;
-      for (const v of NOTE_VALUES) { r -= v.weight; if (r <= 0) return v.beats; }
+      for (const v of NOTE_VALUES_BASE) { r -= v.weight; if (r <= 0) return v.beats; }
       return 1;
     };
-  
-    // 同時発音（コード）を起こすか判定（確率）
-    const CHORD_PROB  = 0.18;  // 18%の確率で複数列同時発音
-    const MAX_CHORD   = Math.min(cols, 3); // 同時最大3列
-  
+
+    // ホールド確率: allowHold が true で 20%
+    const HOLD_PROB  = allowHold ? 0.20 : 0;
+    const CHORD_PROB = allowChord ? 0.18 : 0;
+    const MAX_CHORD  = Math.min(cols, 3);
+
     const list = [];
     let id   = 0;
-    let beat = 0.5; // 開始オフセット
-  
-    // 各列に1音符ずつ保証（最初のパス）
+    let beat = 0.5;
+
     const firstColOrder = Array.from({ length: cols }, (_, i) => i)
       .sort(() => Math.random() - 0.5);
-  
-    // ── メイン生成ループ ────────────────────────────────────────
-    // totalNotes 個になるまでビートを進めながら音符を置いていく
     const safe = Math.max(cols, totalNotes);
     const guaranteedCols = new Set();
-  
+
+    // ホールド末尾 beat を列ごとに追跡（重なり防止）
+    const colHoldEnd = Array.from({ length: cols }, () => 0);
+
     while (list.length < safe) {
-      const remaining = safe - list.length;
-  
-      // 同時発音するか、何列同時か決める
-      const doChord = remaining > 1 && Math.random() < CHORD_PROB;
-      const chordSize = doChord
+      const remaining  = safe - list.length;
+      const doHold     = remaining > 1 && Math.random() < HOLD_PROB;
+      const doChord    = !doHold && remaining > 1 && Math.random() < CHORD_PROB;
+      const chordSize  = doChord
         ? Math.min(remaining, 2 + Math.floor(Math.random() * (MAX_CHORD - 1)))
         : 1;
-  
-      // 同時発音する列をランダムに選ぶ（重複なし）
+
       const availCols = Array.from({ length: cols }, (_, i) => i)
         .sort(() => Math.random() - 0.5)
         .slice(0, chordSize);
-  
-      // まだ1音符も保証されていない列を優先
+
       if (list.length < cols) {
         const needed = firstColOrder.filter(c => !guaranteedCols.has(c));
-        if (needed.length > 0) {
-          availCols[0] = needed[0];
-        }
+        if (needed.length > 0) availCols[0] = needed[0];
       }
-  
-      availCols.forEach(col => {
-        // 同時発音は同じbeatに置く（微小なゆらぎなし）
-        list.push({ id: id++, col, beat, hit: false, result: null });
+
+      if (doHold) {
+        // ホールド音符: 1列のみ・holdBeats はランダム(1~MAX_HOLD_BEATS 拍)
+        const col = availCols[0];
+        // 前のホールドが終わっていない列はスキップ
+        if (beat < colHoldEnd[col]) {
+          beat += pickValue();
+          continue;
+        }
+        const holdBeats = 1 + Math.floor(Math.random() * MAX_HOLD_BEATS);
+        list.push({ id: id++, col, beat, hit: false, result: null, isHold: true, holdBeats });
         guaranteedCols.add(col);
-      });
-  
-      // 次の音符までの間隔を音価で決める
+        colHoldEnd[col] = beat + holdBeats;
+      } else {
+        availCols.forEach(col => {
+          list.push({ id: id++, col, beat, hit: false, result: null, isHold: false, holdBeats: 0 });
+          guaranteedCols.add(col);
+        });
+      }
       beat += pickValue();
     }
-  
+
     return list
       .slice(0, safe)
       .sort((a, b) => a.beat !== b.beat ? a.beat - b.beat : a.col - b.col);
@@ -2019,16 +2041,33 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
   const animRef        = React.useRef(null);
   const finishedRef    = React.useRef(false);
 
-  const maxBeat       = Math.max(...gameNotes.map(n => n.beat), 0) + TRAVEL_BEATS + 0.5;
+  // ── ホールド状態管理 ─────────────────────────────────────────
+  // holdingCols: 列ごとに「現在長押し中のホールドノートID」を保持（null=長押しなし）
+  // holdStartElapsed: 長押し開始時のelapsed値（判定位置計算用）
+  // holdScoreRef: ホールドの成功状態（各ホールドノートのID→ boolean）
+  const holdingColsRef  = React.useRef(Array.from({ length: cols }, () => null));
+  const holdScoreRef   = React.useRef({});
+  // UI用: 各列のホールド進捗0-1
+  const [holdProgress, setHoldProgress] = React.useState(Array.from({ length: cols }, () => 0));
+
+  const maxBeat       = Math.max(...gameNotes.map(n => n.beat + (n.holdBeats ?? 0)), 0) + TRAVEL_BEATS + 0.5;
   const totalDuration = maxBeat * BEAT_MS + 900;
 
-  // ノートのY位置を計算（%）
   const getNoteY = React.useCallback((note, el) => {
     const targetTime = (note.beat + TRAVEL_BEATS) * BEAT_MS;
     const progress   = (el - (targetTime - TRAVEL_MS)) / TRAVEL_MS;
     return progress * TARGET_PCT;
   }, [BEAT_MS, TRAVEL_BEATS, TRAVEL_MS, TARGET_PCT]);
 
+  // ホールド音符のリリース位置Y（head + holdBeats 分下）
+  const getHoldTailY = React.useCallback((note, el) => {
+    const tailBeat   = note.beat + (note.holdBeats ?? 0);
+    const targetTime = (tailBeat + TRAVEL_BEATS) * BEAT_MS;
+    const progress   = (el - (targetTime - TRAVEL_MS)) / TRAVEL_MS;
+    return progress * TARGET_PCT;
+  }, [BEAT_MS, TRAVEL_BEATS, TRAVEL_MS, TARGET_PCT]);
+
+  // ── メインループ ──────────────────────────────────────────────
   React.useEffect(() => {
     startTimeRef.current = performance.now() + 3000;
     const tick = (now) => {
@@ -2036,6 +2075,39 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
       elapsedRef.current = el;
       setElapsed(el);
       if (el >= 0) setPhase("playing");
+
+      // ── ホールド進捗を毎フレーム更新 ────────────────────────────
+      const newProg = holdingColsRef.current.map((holdId, col) => {
+        if (holdId === null) return 0;
+        const note = gameNotesRef.current.find(n => n.id === holdId);
+        if (!note) return 0;
+        const headY = getNoteY(note, el);
+        const tailY = getHoldTailY(note, el);
+        // head が判定ラインを超えたとき（headY >= TARGET_PCT）から
+        // tail が判定ラインに到達するまでの進捗
+        const total = (note.holdBeats ?? 0) * BEAT_MS;
+        const headReachTime = (note.beat + TRAVEL_BEATS) * BEAT_MS;
+        const tailReachTime = ((note.beat + (note.holdBeats??0)) + TRAVEL_BEATS) * BEAT_MS;
+        const p = total > 0 ? Math.min(1, Math.max(0, (el - headReachTime) / (tailReachTime - headReachTime))) : 0;
+        return p;
+      });
+      setHoldProgress(newProg);
+
+      // ── ホールドタイムアウト：押し続けないまま tail が通過したら miss ──
+      gameNotesRef.current.forEach(n => {
+        if (!n.isHold || n.hit) return;
+        const tailY = getHoldTailY(n, el);
+        if (tailY > TARGET_PCT + RHYTHM_GOOD_WINDOW_PCT + 5) {
+          // 完全に通過 → 未処理なら miss 扱いで mark
+          if (holdingColsRef.current[n.col] === n.id) {
+            holdingColsRef.current = holdingColsRef.current.map((v,i) => i===n.col ? null : v);
+          }
+          gameNotesRef.current = gameNotesRef.current.map(nn =>
+            nn.id === n.id ? { ...nn, hit: true, result: "MISS" } : nn
+          );
+        }
+      });
+
       if (el > totalDuration && !finishedRef.current) {
         finishedRef.current = true;
         finalizeResults();
@@ -2048,14 +2120,20 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
   }, []); // eslint-disable-line
 
   const finalizeResults = () => {
+    // ホールド中のものは長さ分の進捗で部分採点
+    holdingColsRef.current.forEach((holdId, col) => {
+      if (holdId === null) return;
+      holdScoreRef.current[holdId] = false; // 離し忘れ = miss
+    });
     const notes = gameNotesRef.current;
     const results = [];
     for (let c = 0; c < cols; c++) {
       const colNotes = notes.filter(n => n.col === c);
       const total    = colNotes.length;
-      const hit      = colNotes.filter(n => n.hit).length;
+      const hit      = colNotes.filter(n => n.hit && n.result !== "MISS").length +
+        colNotes.filter(n => n.isHold && holdScoreRef.current[n.id] === true).length;
       const pct      = total > 0 ? Math.round(hit / total * 100) : 0;
-      const mult         = pct >= 100 ? 2.0 : pct >= 50 ? 1.0 : 0;
+      const mult          = pct >= 100 ? 2.0 : pct >= 50 ? 1.0 : 0;
       const pierceCounter = pct >= 80;
       const critical      = pct >= 100;
       results.push({ col: c, pct, mult, pierceCounter, critical, hit, total });
@@ -2063,31 +2141,49 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
     onComplete(results);
   };
 
-  // 位置ベース判定：タップ時にノートのY位置がTARGET_PCT付近にあれば成立
-  const handleHit = React.useCallback((col) => {
+  // ── タップ / キー押下 (ホールド開始) ──────────────────────────
+  const handlePress = React.useCallback((col) => {
     if (phase !== "playing") return;
     const el = elapsedRef.current;
-    let bestNote  = null;
-    let bestDist  = Infinity;
-    let bestY     = 0;
 
+    // ① ホールド音符の head 判定
+    let holdNote = null;
+    let bestHoldDist = RHYTHM_GOOD_WINDOW_PCT;
     gameNotesRef.current.forEach(n => {
-      if (n.hit || n.col !== col) return;
+      if (!n.isHold || n.hit || n.col !== col) return;
       const y    = getNoteY(n, el);
       const dist = Math.abs(y - TARGET_PCT);
-      // GOOD判定ウィンドウ内かつ通過済みでないノートのみ対象
-      if (dist < RHYTHM_GOOD_WINDOW_PCT && dist < bestDist) {
-        bestDist = dist;
-        bestNote = n;
-        bestY    = y;
-      }
+      if (dist < bestHoldDist) { bestHoldDist = dist; holdNote = n; }
     });
 
+    if (holdNote) {
+      // ホールド開始: hit フラグは立てず holding 状態に
+      // (リリース時に成否判定する)
+      holdingColsRef.current = holdingColsRef.current.map((v,i) => i===col ? holdNote.id : v);
+      const label = bestHoldDist <= RHYTHM_PERFECT_WINDOW_PCT ? "HOLD!" : "HOLD";
+      const color = bestHoldDist <= RHYTHM_PERFECT_WINDOW_PCT ? "#00ffcc" : "#60a5fa";
+      const fbId = performance.now() + Math.random();
+      setHitFeedback(prev => [...prev, { id: fbId, col, label, color }]);
+      setTimeout(() => setHitFeedback(prev => prev.filter(f => f.id !== fbId)), 700);
+      return;
+    }
+
+    // ② 通常タップ音符の判定
+    let bestNote  = null;
+    let bestDist  = Infinity;
+    gameNotesRef.current.forEach(n => {
+      if (n.hit || n.isHold || n.col !== col) return;
+      const y    = getNoteY(n, el);
+      const dist = Math.abs(y - TARGET_PCT);
+      if (dist < RHYTHM_GOOD_WINDOW_PCT && dist < bestDist) {
+        bestDist = dist; bestNote = n;
+      }
+    });
     if (!bestNote) return;
 
     let label, color;
-    if      (bestDist <= RHYTHM_PERFECT_WINDOW_PCT) { label = "PERFECT！"; color = "#f0c040"; }
-    else                                              { label = "GOOD";      color = "#00ffcc"; }
+    if (bestDist <= RHYTHM_PERFECT_WINDOW_PCT) { label = "PERFECT！"; color = "#f0c040"; }
+    else                                         { label = "GOOD";      color = "#00ffcc"; }
 
     const updated = gameNotesRef.current.map(n =>
       n.id === bestNote.id ? { ...n, hit: true, result: label } : n
@@ -2099,21 +2195,63 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
     setTimeout(() => setHitFeedback(prev => prev.filter(f => f.id !== fbId)), 700);
   }, [phase, getNoteY, TARGET_PCT]);
 
+  // ── タッチ / キー離し (ホールド終了) ─────────────────────────
+  const handleRelease = React.useCallback((col) => {
+    if (phase !== "playing") return;
+    const holdId = holdingColsRef.current[col];
+    if (holdId === null) return;
+    holdingColsRef.current = holdingColsRef.current.map((v,i) => i===col ? null : v);
+
+    const el   = elapsedRef.current;
+    const note = gameNotesRef.current.find(n => n.id === holdId);
+    if (!note) return;
+
+    // tail の判定 Y を確認して成否判定
+    const tailY = getHoldTailY(note, el);
+    const dist  = Math.abs(tailY - TARGET_PCT);
+    const success = dist <= RHYTHM_GOOD_WINDOW_PCT;
+    holdScoreRef.current[holdId] = success;
+
+    const label = success
+      ? (dist <= RHYTHM_PERFECT_WINDOW_PCT ? "RELEASE✦" : "RELEASE")
+      : "EARLY!";
+    const color = success
+      ? (dist <= RHYTHM_PERFECT_WINDOW_PCT ? "#f0c040" : "#00ffcc")
+      : "#ff4466";
+
+    gameNotesRef.current = gameNotesRef.current.map(n =>
+      n.id === holdId ? { ...n, hit: true, result: label } : n
+    );
+    setDisplayNotes([...gameNotesRef.current]);
+    const fbId = performance.now() + Math.random();
+    setHitFeedback(prev => [...prev, { id: fbId, col, label, color }]);
+    setTimeout(() => setHitFeedback(prev => prev.filter(f => f.id !== fbId)), 700);
+  }, [phase, getHoldTailY, TARGET_PCT]);
+
+  // ── キーボード操作 ───────────────────────────────────────────
   React.useEffect(() => {
     const KEY_MAP = { "1":0,"2":1,"3":2,"4":3,"a":0,"s":1,"d":2,"f":3 };
-    const onKey = (e) => {
+    const onKeyDown = (e) => {
+      if (e.repeat) return;
       const c = KEY_MAP[e.key.toLowerCase()];
-      if (c !== undefined && c < cols) handleHit(c);
+      if (c !== undefined && c < cols) handlePress(c);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [handleHit, cols]);
+    const onKeyUp = (e) => {
+      const c = KEY_MAP[e.key.toLowerCase()];
+      if (c !== undefined && c < cols) handleRelease(c);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup",   onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup",   onKeyUp);
+    };
+  }, [handlePress, handleRelease, cols]);
 
   const COL_COLORS  = ["#00ffcc", "#f97316", "#a78bfa", "#60a5fa"];
   const countdown   = phase === "countdown" ? Math.max(0, Math.ceil(-elapsed / 1000)) : 0;
   const progressPct = Math.min(100, Math.max(0, elapsed / totalDuration * 100));
 
-  // キャラクター画像URL（sprites/キャラID.webp）
   const getCharImgUrl = (label) => {
     if (!label || !label.charId) return null;
     return assetUrl(`sprites/${label.charId}`);
@@ -2128,30 +2266,36 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
           <span style={{color:"#00ffcc"}}>≥80%貫通</span>
           <span style={{color:"#60a5fa"}}>≥50%HIT</span>
           <span style={{color:"#ff4466"}}>&lt;50%MISS</span>
+          {allowHold && <span style={{color:"#86efac"}}>●HOLD</span>}
         </div>
       </div>
+
       {phase === "countdown" && (
         <div style={{position:"absolute",inset:0,zIndex:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(2,5,10,0.93)",gap:6,pointerEvents:"none"}}>
           <div style={{fontSize:8,letterSpacing:8,color:"#4a7a9a"}}>READY</div>
           <div style={{fontSize:72,fontWeight:900,lineHeight:1,color:"#00c8ff",textShadow:"0 0 30px #00c8ff, 0 0 60px #00c8ff44",fontFamily:"'Share Tech Mono',monospace"}}>{countdown}</div>
           <div style={{fontSize:8,color:"#4a7a9a",letterSpacing:2,marginTop:6,textAlign:"center",lineHeight:1.8}}>
             キャラアイコンに音符が重なったらタップ！<br/>
+            {allowHold && <>●ホールド音符は長押しして離す！<br/></>}
             PC: 1234 / ASDF キー　列のどこを押してもOK
           </div>
         </div>
       )}
+
       <div style={{flex:1,display:"flex",gap:2,padding:"3px 3px 0",overflow:"hidden",position:"relative"}}>
         {Array.from({length:cols},(_,col) => {
           const label    = colLabels[col] ?? {icon:"?",name:"?",charId:null};
           const colColor = COL_COLORS[col % COL_COLORS.length];
           const colNotes = displayNotes.filter(n => n.col === col);
-          const colHit   = colNotes.filter(n => n.hit).length;
+          const colHit   = colNotes.filter(n => n.hit && n.result !== "MISS").length;
           const colTotal = colNotes.length;
           const pct      = colTotal > 0 ? Math.round(colHit / colTotal * 100) : 0;
           const fb       = hitFeedback.filter(f => f.col === col);
           const pctColor = pct >= 100 ? "#f0c040" : pct >= 80 ? "#00ffcc" : pct >= 50 ? "#60a5fa" : "#ff4466";
           const charImgUrl = getCharImgUrl(label);
-          // 判定ウィンドウ内に未ヒットノートがあるか（列全体のハイライト用）
+          const isHolding  = holdingColsRef.current[col] !== null;
+          const holdProg   = holdProgress[col] ?? 0;
+
           const hasNearNote = colNotes.some(n => {
             if (n.hit) return false;
             const y = getNoteY(n, elapsed);
@@ -2165,147 +2309,214 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
 
           return (
             <div key={col}
-              onClick={() => handleHit(col)}
-              onTouchStart={(e)=>{e.preventDefault();handleHit(col);}}
+              onPointerDown={(e)=>{e.preventDefault();handlePress(col);}}
+              onPointerUp={(e)=>{e.preventDefault();handleRelease(col);}}
+              onPointerLeave={(e)=>{e.preventDefault();handleRelease(col);}}
               style={{
                 flex:1, position:"relative", display:"flex", flexDirection:"column",
-                cursor:"pointer", userSelect:"none",
+                cursor:"pointer", userSelect:"none", touchAction:"none",
                 borderRight: col<cols-1 ? "1px solid #1a4a6a22" : "none",
-                background: hasPerfectNote
+                background: isHolding
+                  ? `linear-gradient(180deg,transparent 30%,${colColor}28 100%)`
+                  : hasPerfectNote
                   ? `linear-gradient(180deg,transparent 50%,${colColor}18 100%)`
                   : hasNearNote
                   ? `linear-gradient(180deg,transparent 60%,${colColor}0d 100%)`
                   : `linear-gradient(180deg,transparent 70%,${colColor}05 100%)`,
-                transition: "background 0.08s",
-                // 列全体がタップ領域 - 視覚的に示すため全体に薄い境界
                 outline: hasPerfectNote ? `1px solid ${colColor}44` : "none",
               }}>
 
-              {/* ── 落下ノート（キャラアイコン画像） ── */}
+              {/* ── ホールド中：進捗バー（左端縦帯） ──────────────────── */}
+              {isHolding && (
+                <div style={{
+                  position:"absolute",left:0,top:0,
+                  width:4,
+                  height:`${holdProg*TARGET_PCT}%`,
+                  background:`linear-gradient(180deg,transparent,${colColor}cc)`,
+                  zIndex:5,pointerEvents:"none",
+                  transition:"height 0.05s",
+                }}/>
+              )}
+
+              {/* ── 落下ノート ──────────────────────────────────────── */}
               {colNotes.filter(n => !n.hit).map(note => {
                 const y = getNoteY(note, elapsed);
-                if (y < -15 || y > TARGET_PCT + 20) return null;
+                if (y < -25 || y > TARGET_PCT + 25) return null;
                 const dist = Math.abs(y - TARGET_PCT);
                 const isPerfect = dist <= RHYTHM_PERFECT_WINDOW_PCT;
                 const isNear    = dist <= RHYTHM_GOOD_WINDOW_PCT;
-                const glowColor = isPerfect ? "#f0c040" : isNear ? colColor : colColor;
-                const glowIntensity = isPerfect ? `0 0 18px ${glowColor}ff,0 0 36px ${glowColor}88,0 0 54px ${glowColor}44`
-                                    : isNear    ? `0 0 10px ${glowColor}cc,0 0 20px ${glowColor}44`
-                                    :             `0 0 4px ${glowColor}44`;
+                const glowColor = isPerfect ? "#f0c040" : colColor;
+                const isBeingHeld = isHolding && holdingColsRef.current[col] === note.id;
+
+                if (note.isHold) {
+                  // ── ホールド音符描画 ──────────────────────────────────
+                  // 頭円（head）+ 縦棒（body）+ 尾円（tail）
+                  const tailY   = getHoldTailY(note, elapsed);
+                  const bodyTop = Math.min(y, tailY);
+                  const bodyH   = Math.abs(tailY - y);
+                  const headSize = isPerfect ? 44 : isNear ? 40 : 36;
+                  const holdColor = "#86efac";
+                  const glow = isBeingHeld
+                    ? `0 0 18px ${holdColor}ff,0 0 36px ${holdColor}88`
+                    : isPerfect
+                    ? `0 0 14px ${holdColor}cc,0 0 28px ${holdColor}66`
+                    : `0 0 6px ${holdColor}88`;
+                  return (
+                    <React.Fragment key={note.id}>
+                      {/* 縦棒 body */}
+                      {bodyH > 2 && (
+                        <div style={{
+                          position:"absolute",
+                          top:`${bodyTop}%`,
+                          left:"50%",
+                          transform:"translateX(-50%)",
+                          width:10,
+                          height:`${bodyH}%`,
+                          background: isBeingHeld
+                            ? `linear-gradient(180deg,${holdColor}cc,${holdColor}44)`
+                            : `linear-gradient(180deg,${holdColor}88,${holdColor}22)`,
+                          boxShadow: isBeingHeld ? `0 0 8px ${holdColor}cc` : "none",
+                          borderRadius:5,
+                          pointerEvents:"none",zIndex:3,
+                          animation: isBeingHeld ? "holdPulse 0.4s ease-in-out infinite" : "none",
+                        }}/>
+                      )}
+                      {/* 尾円 tail */}
+                      {tailY >= -15 && tailY <= TARGET_PCT + 25 && (
+                        <div style={{
+                          position:"absolute",
+                          top:`${tailY}%`,left:"50%",
+                          transform:"translate(-50%,-50%)",
+                          width:24,height:24,borderRadius:"50%",
+                          background: isBeingHeld ? holdColor : `${holdColor}44`,
+                          border:`2px solid ${holdColor}`,
+                          boxShadow: isBeingHeld ? `0 0 12px ${holdColor}` : "none",
+                          pointerEvents:"none",zIndex:4,
+                        }}/>
+                      )}
+                      {/* 頭円 head */}
+                      <div style={{
+                        position:"absolute",
+                        top:`${y}%`,left:"50%",
+                        transform:"translate(-50%,-50%)",
+                        width:headSize,height:headSize,borderRadius:"50%",
+                        overflow:"hidden",
+                        border: isPerfect ? `3px solid ${holdColor}` : `2px solid ${holdColor}cc`,
+                        boxShadow:glow,
+                        background: charImgUrl ? "transparent" : `radial-gradient(circle,${holdColor}cc,${holdColor}44)`,
+                        pointerEvents:"none",zIndex:4,
+                        /* ホールド音符は緑の外枠で識別 */
+                        outline: `2px solid ${holdColor}55`,
+                        outlineOffset: 2,
+                        animation: isBeingHeld ? "holdPulse 0.4s ease-in-out infinite" : "none",
+                      }}>
+                        {charImgUrl ? (
+                          <img src={charImgUrl} alt={label.name}
+                            style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top center",display:"block",
+                              filter:`sepia(0.5) saturate(2) hue-rotate(90deg)`}}
+                          />
+                        ) : (
+                          <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isPerfect?18:16}}>
+                            {label.icon}
+                          </div>
+                        )}
+                        {isPerfect && (
+                          <div style={{position:"absolute",inset:-3,borderRadius:"50%",border:`2px solid ${holdColor}`,animation:"comboPulse 0.5s infinite",pointerEvents:"none"}}/>
+                        )}
+                      </div>
+                    </React.Fragment>
+                  );
+                }
+
+                // ── 通常タップ音符 ────────────────────────────────────────
+                const glowIntensity = isPerfect
+                  ? `0 0 18px ${glowColor}ff,0 0 36px ${glowColor}88,0 0 54px ${glowColor}44`
+                  : isNear
+                  ? `0 0 10px ${glowColor}cc,0 0 20px ${glowColor}44`
+                  : `0 0 4px ${glowColor}44`;
                 return (
                   <div key={note.id} style={{
-                    position:"absolute",
-                    top:`${y}%`,
-                    left:"50%",
+                    position:"absolute",top:`${y}%`,left:"50%",
                     transform:"translate(-50%,-50%)",
-                    width: isPerfect ? 44 : isNear ? 40 : 36,
-                    height: isPerfect ? 44 : isNear ? 40 : 36,
-                    borderRadius:"50%",
-                    overflow:"hidden",
-                    border: isPerfect ? `2px solid ${glowColor}` : isNear ? `1.5px solid ${glowColor}cc` : `1px solid ${glowColor}66`,
-                    boxShadow: glowIntensity,
-                    transition:"width 0.06s,height 0.06s,box-shadow 0.06s,border 0.06s",
-                    pointerEvents:"none",
-                    zIndex:4,
-                    background: charImgUrl ? "transparent" : `radial-gradient(circle,${colColor}cc,${colColor}44)`,
+                    width:isPerfect?44:isNear?40:36,height:isPerfect?44:isNear?40:36,
+                    borderRadius:"50%",overflow:"hidden",
+                    border:isPerfect?`2px solid ${glowColor}`:isNear?`1.5px solid ${glowColor}cc`:`1px solid ${glowColor}66`,
+                    boxShadow:glowIntensity,
+                    transition:"width 0.06s,height 0.06s,box-shadow 0.06s",
+                    pointerEvents:"none",zIndex:4,
+                    background:charImgUrl?"transparent":`radial-gradient(circle,${colColor}cc,${colColor}44)`,
                   }}>
-                    {charImgUrl ? (
+                    {charImgUrl?(
                       <img src={charImgUrl} alt={label.name}
                         style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top center",display:"block"}}
                       />
-                    ) : (
-                      // フォールバック：絵文字アイコン
-                      <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isPerfect?18:16}}>
-                        {label.icon}
-                      </div>
+                    ):(
+                      <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isPerfect?18:16}}>{label.icon}</div>
                     )}
-                    {/* PERFECT圏内時のリング演出 */}
-                    {isPerfect && (
-                      <div style={{position:"absolute",inset:-3,borderRadius:"50%",border:`2px solid ${glowColor}`,animation:"comboPulse 0.5s infinite",pointerEvents:"none"}}/>
-                    )}
+                    {isPerfect&&(<div style={{position:"absolute",inset:-3,borderRadius:"50%",border:`2px solid ${glowColor}`,animation:"comboPulse 0.5s infinite",pointerEvents:"none"}}/>)}
                   </div>
                 );
               })}
 
-              {/* ── 判定ライン（キャラアイコン位置） ── */}
+              {/* ── 判定ライン ─────────────────────────────────────────── */}
               <div style={{
-                position:"absolute",
-                top:`${TARGET_PCT}%`,
-                left:"4%",right:"4%",
-                height: hasPerfectNote ? 4 : 2,
-                background: hasPerfectNote
-                  ? `linear-gradient(90deg,transparent,#f0c040,transparent)`
-                  : `linear-gradient(90deg,transparent,${colColor}cc,transparent)`,
-                boxShadow: hasPerfectNote ? `0 0 14px #f0c040aa` : `0 0 8px ${colColor}66`,
-                borderRadius:2,
-                pointerEvents:"none",
-                transition:"height 0.06s,background 0.06s",
-                zIndex:3,
+                position:"absolute",top:`${TARGET_PCT}%`,left:"4%",right:"4%",
+                height:hasPerfectNote||isHolding?4:2,
+                background:hasPerfectNote
+                  ?`linear-gradient(90deg,transparent,#f0c040,transparent)`
+                  :isHolding
+                  ?`linear-gradient(90deg,transparent,#86efac,transparent)`
+                  :`linear-gradient(90deg,transparent,${colColor}cc,transparent)`,
+                boxShadow:hasPerfectNote?`0 0 14px #f0c040aa`:isHolding?`0 0 14px #86efacaa`:`0 0 8px ${colColor}66`,
+                borderRadius:2,pointerEvents:"none",zIndex:3,
               }}/>
 
               {/* GOOD判定ウィンドウ枠 */}
               <div style={{
                 position:"absolute",
-                top:`${TARGET_PCT - RHYTHM_GOOD_WINDOW_PCT}%`,
-                bottom:`${100 - TARGET_PCT - RHYTHM_GOOD_WINDOW_PCT}%`,
+                top:`${TARGET_PCT-RHYTHM_GOOD_WINDOW_PCT}%`,
+                bottom:`${100-TARGET_PCT-RHYTHM_GOOD_WINDOW_PCT}%`,
                 left:"16%",right:"16%",
-                border:`1px solid ${colColor}${hasNearNote?"33":"18"}`,
-                borderRadius:6,
-                pointerEvents:"none",
-                zIndex:2,
+                border:`1px solid ${colColor}${hasNearNote||isHolding?"33":"18"}`,
+                borderRadius:6,pointerEvents:"none",zIndex:2,
               }}/>
 
-              {/* ── ヒットフィードバック ── */}
+              {/* ── ヒットフィードバック ─────────────────────────────── */}
               {fb.map(f => (
                 <div key={f.id} style={{
-                  position:"absolute",
-                  top:`${TARGET_PCT - 20}%`,
-                  left:"50%",
+                  position:"absolute",top:`${TARGET_PCT-20}%`,left:"50%",
                   transform:"translateX(-50%)",
-                  fontSize: f.label === "PERFECT！" ? 11 : 9,
-                  fontWeight:900,
-                  color:f.color,
+                  fontSize:f.label.includes("PERFECT")||f.label.includes("RELEASE✦")?11:9,
+                  fontWeight:900,color:f.color,
                   textShadow:`0 0 10px ${f.color},0 0 20px ${f.color}88`,
                   animation:"hitFloat 0.65s ease-out forwards",
-                  whiteSpace:"nowrap",
-                  zIndex:6,
-                  pointerEvents:"none",
-                  letterSpacing:1,
+                  whiteSpace:"nowrap",zIndex:6,pointerEvents:"none",letterSpacing:1,
                 }}>{f.label}</div>
               ))}
 
-              {/* ── 下部：キャラアイコン表示エリア ── */}
+              {/* ── 下部：キャラアイコン表示エリア ─────────────────────── */}
               <div style={{
-                position:"absolute",
-                bottom:0,left:0,right:0,
-                height:62,
+                position:"absolute",bottom:0,left:0,right:0,height:62,
                 background:`linear-gradient(180deg,transparent,rgba(2,5,10,0.97))`,
-                borderTop:`2px solid ${colColor}${hasPerfectNote?"aa":hasNearNote?"66":"44"}`,
+                borderTop:`2px solid ${isHolding?"#86efac":colColor}${hasPerfectNote?"aa":hasNearNote?"66":"44"}`,
                 display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
                 pointerEvents:"none",
-                transition:"border-color 0.06s",
               }}>
-                {/* キャラアイコン画像（固定・判定基準） */}
                 <div style={{
-                  width:36,height:36,
-                  borderRadius:"50%",
-                  overflow:"hidden",
-                  border: hasPerfectNote ? `2px solid #f0c040` : hasNearNote ? `2px solid ${colColor}` : `1.5px solid ${colColor}88`,
-                  boxShadow: hasPerfectNote ? `0 0 12px #f0c040cc` : hasNearNote ? `0 0 8px ${colColor}88` : "none",
-                  transition:"border-color 0.06s,box-shadow 0.06s",
-                  background: charImgUrl ? "transparent" : `${colColor}33`,
+                  width:36,height:36,borderRadius:"50%",overflow:"hidden",
+                  border:hasPerfectNote?`2px solid #f0c040`:isHolding?`2px solid #86efac`:`1.5px solid ${colColor}88`,
+                  boxShadow:hasPerfectNote?`0 0 12px #f0c040cc`:isHolding?`0 0 12px #86efaccc`:hasNearNote?`0 0 8px ${colColor}88`:"none",
+                  background:charImgUrl?"transparent":`${colColor}33`,
                 }}>
-                  {charImgUrl ? (
+                  {charImgUrl?(
                     <img src={charImgUrl} alt={label.name}
                       style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top center",display:"block"}}
                     />
-                  ) : (
-                    <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>
-                      {label.icon}
-                    </div>
+                  ):(
+                    <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{label.icon}</div>
                   )}
                 </div>
-                <div style={{fontSize:8,fontWeight:700,color:pctColor,fontFamily:"'Share Tech Mono',monospace",transition:"color 0.2s",letterSpacing:0.5}}>
+                <div style={{fontSize:8,fontWeight:700,color:pctColor,fontFamily:"'Share Tech Mono',monospace",letterSpacing:0.5}}>
                   {colHit}/{colTotal} ({pct}%)
                 </div>
                 <div style={{fontSize:6,color:"#1a4a6a88",letterSpacing:1}}>
@@ -2316,6 +2527,7 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
           );
         })}
       </div>
+
       <div style={{flexShrink:0,padding:"3px 5px 5px",background:"rgba(5,13,20,0.9)"}}>
         <div style={{height:3,background:"#1a4a6a22",borderRadius:2,overflow:"hidden",marginBottom:3}}>
           <div style={{height:"100%",width:`${progressPct}%`,background:"linear-gradient(90deg,#00c8ff,#00ffcc)",borderRadius:2,transition:"width 0.08s"}}/>
@@ -2328,7 +2540,7 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
     </div>
   );
 }
-
+  
 // 勝利画面ボタン -- 1回目押下でファンファーレ開始、2回目押下でシーン遷移
 function VictoryButton({ onFanfareStart, onProceed }) {
   const [started, setStarted] = useState(false);
@@ -5507,6 +5719,9 @@ export default function ArcadiaCh2() {
       95%  { transform: translate(-5px, 3px); }
       100% { transform: translate(0px, 0px); }
     }
+    // keyframes テンプレートリテラルの末尾（バッククォート閉じの直前）に追加：
+    @keyframes holdPulse { 0%,100%{opacity:0.85;transform:scaleX(1)} 50%{opacity:1;transform:scaleX(1.18)} }
+  
     `;
 
   // @@SECTION:RENDER_VICTORY
@@ -7420,6 +7635,11 @@ export default function ArcadiaCh2() {
                   colLabels={rLabels}
                   totalNotes={rhythmTotalNotes}
                   bpm={rhythmBpm}
+                  noteOptions={(() => {
+                    const cfg = BATTLE_RHYTHM_MAP[currentEnemyType ?? "default"]
+                              ?? BATTLE_RHYTHM_MAP["default"];
+                    return cfg.noteOptions ?? {};
+                  })()}
                   onComplete={(results) => {
                     setRhythmResults(results);
                     setRhythmPhase("done");
