@@ -277,8 +277,19 @@ const C = {
 };
 
 
-// @@SECTION:BATTLE_CONFIG ─────────────────────────────────────────────────────
-// 【編集ガイド】
+// @@SECTION:BATTLE_CONFIG
+// ── バトル難易度マップ（sceneId → 総音符数） ─────────────────────────────────
+// 各バトルの sceneId / id をキーに音符数を設定します
+// sceneId が一致しない場合は "default" の値が使われます
+const BATTLE_NOTES_MAP = {
+  "default":    8,   // デフォルト（未設定のバトル）
+  "tutorial":   4,   // チュートリアル（簡単）
+  "field":      6,   // フィールドバトル（普通）
+  "boss1":     12,   // ボス1
+  "boss2":     16,   // ボス2（難しい）
+  "final":     16,   // 最終ボス
+}; 
+// ─────────────────────────────────────────────────────【編集ガイド】
 //   敵のパターンを変えたいとき → 各エネミーの pattern: [...] だけ書き換える
 //   使える行動ID:
 //     "atk"         強攻       プレイヤーのcounterに負ける
@@ -699,6 +710,17 @@ const WEAPON_BASE_ATK = {
 const SKILL_DEFS = {
 
   // ─── 基本スキル ──────────────────────────────────────────────────────────
+  wait: {
+    label:"静観", icon:"⌛", color:"#4a7a9a", cost:0, cooldown:0,
+    isPrephase:false, isEndphase:false,
+    dmgType:"fixed", baseDmg:[0,0], weaponMult:false, atkMult:false, dmgMult:0,
+    hits:0, target:"single", element:null, pierceCounter:false, comboBonus:1.0,
+    healFlat:0, healTarget:"self",
+    enemyStun:0, enemyForceAction:null, enemyForceActionTurns:0,
+    enemyDebuff:null,
+    selfBuff:null,
+    enrageBreak:false,
+  },
   atk: {
     label:"強攻", icon:"⚔", color:"#00ffcc", cost:0, cooldown:0,
     isPrephase:false, isEndphase:false,
@@ -1870,6 +1892,365 @@ const LOC_TO_SCENE_IMG = {
   "スティアルーフ 中央広場 屋台市":    "scenes/ch2_foodcourt",        // 中央広場背景を流用
 };
 
+// ============================================================
+// @@SECTION:RHYTHM_GAME ── リズムゲームコンポーネント
+// ============================================================
+// pct < 50  → MISS（ノーヒット・ダメージ無効）
+// pct 50-79 → HIT（通常ダメージ）
+// pct 80-99 → PIERCE（カウンター貫通）
+// pct >=100 → CRITICAL（ダメージ×2）
+// 各列に最低1音符保証
+// 判定：ノートがキャラアイコン（TARGET_PCT付近）に重なった時に列タップで成立
+// ============================================================
+
+// 位置ベース判定ウィンドウ（%単位、TARGET_PCTからの距離）
+const RHYTHM_PERFECT_WINDOW_PCT = 7;   // PERFECT判定幅（±7%）
+const RHYTHM_GOOD_WINDOW_PCT    = 15;  // GOOD判定幅（±15%）
+
+function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
+  const BEAT_MS      = Math.round(60000 / bpm);
+  const TRAVEL_BEATS = 4;
+  const TRAVEL_MS    = BEAT_MS * TRAVEL_BEATS;
+  const TARGET_PCT   = 72; // アイコンの上端位置（%）
+
+  const [gameNotes] = React.useState(() => {
+    const list = [];
+    let id = 0;
+    const safe = Math.max(cols, totalNotes);
+    for (let c = 0; c < cols; c++) {
+      const beat = 0.55 + c * 0.6 + Math.random() * 0.2;
+      list.push({ id: id++, col: c, beat, hit: false, result: null });
+    }
+    const extra = safe - cols;
+    for (let i = 0; i < extra; i++) {
+      const c = i % cols;
+      const row = Math.floor(i / cols) + 1;
+      const beat = row * (cols * 0.6) + (i % cols) * 0.55 + Math.random() * 0.2;
+      list.push({ id: id++, col: c, beat, hit: false, result: null });
+    }
+    return list.sort((a, b) => a.beat - b.beat);
+  });
+
+  const gameNotesRef   = React.useRef(gameNotes.map(n => ({ ...n })));
+  const elapsedRef     = React.useRef(-3000);
+  const [displayNotes, setDisplayNotes] = React.useState(() => gameNotes.map(n => ({ ...n })));
+  const startTimeRef   = React.useRef(null);
+  const [elapsed,      setElapsed    ] = React.useState(-3000);
+  const [phase,        setPhase      ] = React.useState("countdown");
+  const [hitFeedback,  setHitFeedback] = React.useState([]);
+  const animRef        = React.useRef(null);
+  const finishedRef    = React.useRef(false);
+
+  const maxBeat       = Math.max(...gameNotes.map(n => n.beat), 0) + TRAVEL_BEATS + 0.5;
+  const totalDuration = maxBeat * BEAT_MS + 900;
+
+  // ノートのY位置を計算（%）
+  const getNoteY = React.useCallback((note, el) => {
+    const targetTime = (note.beat + TRAVEL_BEATS) * BEAT_MS;
+    const progress   = (el - (targetTime - TRAVEL_MS)) / TRAVEL_MS;
+    return progress * TARGET_PCT;
+  }, [BEAT_MS, TRAVEL_BEATS, TRAVEL_MS, TARGET_PCT]);
+
+  React.useEffect(() => {
+    startTimeRef.current = performance.now() + 3000;
+    const tick = (now) => {
+      const el = now - startTimeRef.current;
+      elapsedRef.current = el;
+      setElapsed(el);
+      if (el >= 0) setPhase("playing");
+      if (el > totalDuration && !finishedRef.current) {
+        finishedRef.current = true;
+        finalizeResults();
+        return;
+      }
+      animRef.current = requestAnimationFrame(tick);
+    };
+    animRef.current = requestAnimationFrame(tick);
+    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
+  }, []); // eslint-disable-line
+
+  const finalizeResults = () => {
+    const notes = gameNotesRef.current;
+    const results = [];
+    for (let c = 0; c < cols; c++) {
+      const colNotes = notes.filter(n => n.col === c);
+      const total    = colNotes.length;
+      const hit      = colNotes.filter(n => n.hit).length;
+      const pct      = total > 0 ? Math.round(hit / total * 100) : 0;
+      const mult         = pct >= 100 ? 2.0 : pct >= 50 ? 1.0 : 0;
+      const pierceCounter = pct >= 80;
+      const critical      = pct >= 100;
+      results.push({ col: c, pct, mult, pierceCounter, critical, hit, total });
+    }
+    onComplete(results);
+  };
+
+  // 位置ベース判定：タップ時にノートのY位置がTARGET_PCT付近にあれば成立
+  const handleHit = React.useCallback((col) => {
+    if (phase !== "playing") return;
+    const el = elapsedRef.current;
+    let bestNote  = null;
+    let bestDist  = Infinity;
+    let bestY     = 0;
+
+    gameNotesRef.current.forEach(n => {
+      if (n.hit || n.col !== col) return;
+      const y    = getNoteY(n, el);
+      const dist = Math.abs(y - TARGET_PCT);
+      // GOOD判定ウィンドウ内かつ通過済みでないノートのみ対象
+      if (dist < RHYTHM_GOOD_WINDOW_PCT && dist < bestDist) {
+        bestDist = dist;
+        bestNote = n;
+        bestY    = y;
+      }
+    });
+
+    if (!bestNote) return;
+
+    let label, color;
+    if      (bestDist <= RHYTHM_PERFECT_WINDOW_PCT) { label = "PERFECT！"; color = "#f0c040"; }
+    else                                              { label = "GOOD";      color = "#00ffcc"; }
+
+    const updated = gameNotesRef.current.map(n =>
+      n.id === bestNote.id ? { ...n, hit: true, result: label } : n
+    );
+    gameNotesRef.current = updated;
+    setDisplayNotes([...updated]);
+    const fbId = performance.now() + Math.random();
+    setHitFeedback(prev => [...prev, { id: fbId, col, label, color }]);
+    setTimeout(() => setHitFeedback(prev => prev.filter(f => f.id !== fbId)), 700);
+  }, [phase, getNoteY, TARGET_PCT]);
+
+  React.useEffect(() => {
+    const KEY_MAP = { "1":0,"2":1,"3":2,"4":3,"a":0,"s":1,"d":2,"f":3 };
+    const onKey = (e) => {
+      const c = KEY_MAP[e.key.toLowerCase()];
+      if (c !== undefined && c < cols) handleHit(c);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleHit, cols]);
+
+  const COL_COLORS  = ["#00ffcc", "#f97316", "#a78bfa", "#60a5fa"];
+  const countdown   = phase === "countdown" ? Math.max(0, Math.ceil(-elapsed / 1000)) : 0;
+  const progressPct = Math.min(100, Math.max(0, elapsed / totalDuration * 100));
+
+  // キャラクター画像URL（sprites/キャラID.webp）
+  const getCharImgUrl = (label) => {
+    if (!label || !label.charId) return null;
+    return assetUrl(`sprites/${label.charId}`);
+  };
+
+  return (
+    <div style={{position:"absolute",inset:0,zIndex:300,background:"rgba(2,5,10,0.98)",display:"flex",flexDirection:"column",fontFamily:"'Share Tech Mono',monospace",overflow:"hidden"}}>
+      <div style={{padding:"5px 10px",borderBottom:"1px solid #1a4a6a55",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"rgba(5,13,20,0.9)"}}>
+        <div style={{fontSize:9,letterSpacing:5,color:"#00c8ff",fontWeight:700}}>⚔ ATTACK RHYTHM</div>
+        <div style={{display:"flex",gap:8,fontSize:7}}>
+          <span style={{color:"#f0c040"}}>PERF≥100%×2</span>
+          <span style={{color:"#00ffcc"}}>≥80%貫通</span>
+          <span style={{color:"#60a5fa"}}>≥50%HIT</span>
+          <span style={{color:"#ff4466"}}>&lt;50%MISS</span>
+        </div>
+      </div>
+      {phase === "countdown" && (
+        <div style={{position:"absolute",inset:0,zIndex:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(2,5,10,0.93)",gap:6,pointerEvents:"none"}}>
+          <div style={{fontSize:8,letterSpacing:8,color:"#4a7a9a"}}>READY</div>
+          <div style={{fontSize:72,fontWeight:900,lineHeight:1,color:"#00c8ff",textShadow:"0 0 30px #00c8ff, 0 0 60px #00c8ff44",fontFamily:"'Share Tech Mono',monospace"}}>{countdown}</div>
+          <div style={{fontSize:8,color:"#4a7a9a",letterSpacing:2,marginTop:6,textAlign:"center",lineHeight:1.8}}>
+            キャラアイコンに音符が重なったらタップ！<br/>
+            PC: 1234 / ASDF キー　列のどこを押してもOK
+          </div>
+        </div>
+      )}
+      <div style={{flex:1,display:"flex",gap:2,padding:"3px 3px 0",overflow:"hidden",position:"relative"}}>
+        {Array.from({length:cols},(_,col) => {
+          const label    = colLabels[col] ?? {icon:"?",name:"?",charId:null};
+          const colColor = COL_COLORS[col % COL_COLORS.length];
+          const colNotes = displayNotes.filter(n => n.col === col);
+          const colHit   = colNotes.filter(n => n.hit).length;
+          const colTotal = colNotes.length;
+          const pct      = colTotal > 0 ? Math.round(colHit / colTotal * 100) : 0;
+          const fb       = hitFeedback.filter(f => f.col === col);
+          const pctColor = pct >= 100 ? "#f0c040" : pct >= 80 ? "#00ffcc" : pct >= 50 ? "#60a5fa" : "#ff4466";
+          const charImgUrl = getCharImgUrl(label);
+          // 判定ウィンドウ内に未ヒットノートがあるか（列全体のハイライト用）
+          const hasNearNote = colNotes.some(n => {
+            if (n.hit) return false;
+            const y = getNoteY(n, elapsed);
+            return Math.abs(y - TARGET_PCT) <= RHYTHM_GOOD_WINDOW_PCT;
+          });
+          const hasPerfectNote = colNotes.some(n => {
+            if (n.hit) return false;
+            const y = getNoteY(n, elapsed);
+            return Math.abs(y - TARGET_PCT) <= RHYTHM_PERFECT_WINDOW_PCT;
+          });
+
+          return (
+            <div key={col}
+              onClick={() => handleHit(col)}
+              onTouchStart={(e)=>{e.preventDefault();handleHit(col);}}
+              style={{
+                flex:1, position:"relative", display:"flex", flexDirection:"column",
+                cursor:"pointer", userSelect:"none",
+                borderRight: col<cols-1 ? "1px solid #1a4a6a22" : "none",
+                background: hasPerfectNote
+                  ? `linear-gradient(180deg,transparent 50%,${colColor}18 100%)`
+                  : hasNearNote
+                  ? `linear-gradient(180deg,transparent 60%,${colColor}0d 100%)`
+                  : `linear-gradient(180deg,transparent 70%,${colColor}05 100%)`,
+                transition: "background 0.08s",
+                // 列全体がタップ領域 - 視覚的に示すため全体に薄い境界
+                outline: hasPerfectNote ? `1px solid ${colColor}44` : "none",
+              }}>
+
+              {/* ── 落下ノート（キャラアイコン画像） ── */}
+              {colNotes.filter(n => !n.hit).map(note => {
+                const y = getNoteY(note, elapsed);
+                if (y < -15 || y > TARGET_PCT + 20) return null;
+                const dist = Math.abs(y - TARGET_PCT);
+                const isPerfect = dist <= RHYTHM_PERFECT_WINDOW_PCT;
+                const isNear    = dist <= RHYTHM_GOOD_WINDOW_PCT;
+                const glowColor = isPerfect ? "#f0c040" : isNear ? colColor : colColor;
+                const glowIntensity = isPerfect ? `0 0 18px ${glowColor}ff,0 0 36px ${glowColor}88,0 0 54px ${glowColor}44`
+                                    : isNear    ? `0 0 10px ${glowColor}cc,0 0 20px ${glowColor}44`
+                                    :             `0 0 4px ${glowColor}44`;
+                return (
+                  <div key={note.id} style={{
+                    position:"absolute",
+                    top:`${y}%`,
+                    left:"50%",
+                    transform:"translate(-50%,-50%)",
+                    width: isPerfect ? 44 : isNear ? 40 : 36,
+                    height: isPerfect ? 44 : isNear ? 40 : 36,
+                    borderRadius:"50%",
+                    overflow:"hidden",
+                    border: isPerfect ? `2px solid ${glowColor}` : isNear ? `1.5px solid ${glowColor}cc` : `1px solid ${glowColor}66`,
+                    boxShadow: glowIntensity,
+                    transition:"width 0.06s,height 0.06s,box-shadow 0.06s,border 0.06s",
+                    pointerEvents:"none",
+                    zIndex:4,
+                    background: charImgUrl ? "transparent" : `radial-gradient(circle,${colColor}cc,${colColor}44)`,
+                  }}>
+                    {charImgUrl ? (
+                      <img src={charImgUrl} alt={label.name}
+                        style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top center",display:"block"}}
+                      />
+                    ) : (
+                      // フォールバック：絵文字アイコン
+                      <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isPerfect?18:16}}>
+                        {label.icon}
+                      </div>
+                    )}
+                    {/* PERFECT圏内時のリング演出 */}
+                    {isPerfect && (
+                      <div style={{position:"absolute",inset:-3,borderRadius:"50%",border:`2px solid ${glowColor}`,animation:"comboPulse 0.5s infinite",pointerEvents:"none"}}/>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* ── 判定ライン（キャラアイコン位置） ── */}
+              <div style={{
+                position:"absolute",
+                top:`${TARGET_PCT}%`,
+                left:"4%",right:"4%",
+                height: hasPerfectNote ? 4 : 2,
+                background: hasPerfectNote
+                  ? `linear-gradient(90deg,transparent,#f0c040,transparent)`
+                  : `linear-gradient(90deg,transparent,${colColor}cc,transparent)`,
+                boxShadow: hasPerfectNote ? `0 0 14px #f0c040aa` : `0 0 8px ${colColor}66`,
+                borderRadius:2,
+                pointerEvents:"none",
+                transition:"height 0.06s,background 0.06s",
+                zIndex:3,
+              }}/>
+
+              {/* GOOD判定ウィンドウ枠 */}
+              <div style={{
+                position:"absolute",
+                top:`${TARGET_PCT - RHYTHM_GOOD_WINDOW_PCT}%`,
+                bottom:`${100 - TARGET_PCT - RHYTHM_GOOD_WINDOW_PCT}%`,
+                left:"16%",right:"16%",
+                border:`1px solid ${colColor}${hasNearNote?"33":"18"}`,
+                borderRadius:6,
+                pointerEvents:"none",
+                zIndex:2,
+              }}/>
+
+              {/* ── ヒットフィードバック ── */}
+              {fb.map(f => (
+                <div key={f.id} style={{
+                  position:"absolute",
+                  top:`${TARGET_PCT - 20}%`,
+                  left:"50%",
+                  transform:"translateX(-50%)",
+                  fontSize: f.label === "PERFECT！" ? 11 : 9,
+                  fontWeight:900,
+                  color:f.color,
+                  textShadow:`0 0 10px ${f.color},0 0 20px ${f.color}88`,
+                  animation:"hitFloat 0.65s ease-out forwards",
+                  whiteSpace:"nowrap",
+                  zIndex:6,
+                  pointerEvents:"none",
+                  letterSpacing:1,
+                }}>{f.label}</div>
+              ))}
+
+              {/* ── 下部：キャラアイコン表示エリア ── */}
+              <div style={{
+                position:"absolute",
+                bottom:0,left:0,right:0,
+                height:62,
+                background:`linear-gradient(180deg,transparent,rgba(2,5,10,0.97))`,
+                borderTop:`2px solid ${colColor}${hasPerfectNote?"aa":hasNearNote?"66":"44"}`,
+                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
+                pointerEvents:"none",
+                transition:"border-color 0.06s",
+              }}>
+                {/* キャラアイコン画像（固定・判定基準） */}
+                <div style={{
+                  width:36,height:36,
+                  borderRadius:"50%",
+                  overflow:"hidden",
+                  border: hasPerfectNote ? `2px solid #f0c040` : hasNearNote ? `2px solid ${colColor}` : `1.5px solid ${colColor}88`,
+                  boxShadow: hasPerfectNote ? `0 0 12px #f0c040cc` : hasNearNote ? `0 0 8px ${colColor}88` : "none",
+                  transition:"border-color 0.06s,box-shadow 0.06s",
+                  background: charImgUrl ? "transparent" : `${colColor}33`,
+                }}>
+                  {charImgUrl ? (
+                    <img src={charImgUrl} alt={label.name}
+                      style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top center",display:"block"}}
+                    />
+                  ) : (
+                    <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>
+                      {label.icon}
+                    </div>
+                  )}
+                </div>
+                <div style={{fontSize:8,fontWeight:700,color:pctColor,fontFamily:"'Share Tech Mono',monospace",transition:"color 0.2s",letterSpacing:0.5}}>
+                  {colHit}/{colTotal} ({pct}%)
+                </div>
+                <div style={{fontSize:6,color:"#1a4a6a88",letterSpacing:1}}>
+                  [{["1","2","3","4"][col]??col+1}/{"ASDF"[col]??"?"}]
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{flexShrink:0,padding:"3px 5px 5px",background:"rgba(5,13,20,0.9)"}}>
+        <div style={{height:3,background:"#1a4a6a22",borderRadius:2,overflow:"hidden",marginBottom:3}}>
+          <div style={{height:"100%",width:`${progressPct}%`,background:"linear-gradient(90deg,#00c8ff,#00ffcc)",borderRadius:2,transition:"width 0.08s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:7,color:"#4a7a9a",letterSpacing:2}}>{phase==="countdown"?`START in ${countdown}...`:"♩ RHYTHM PHASE"}</div>
+          {phase==="playing"&&(<button onClick={(e)=>{e.stopPropagation();if(!finishedRef.current){finishedRef.current=true;finalizeResults();}}} style={{padding:"2px 8px",fontSize:7,letterSpacing:2,background:"transparent",border:"1px solid #1a4a6a",color:"#4a7a9a",cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",borderRadius:2}}>SKIP</button>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 勝利画面ボタン -- 1回目押下でファンファーレ開始、2回目押下でシーン遷移
 function VictoryButton({ onFanfareStart, onProceed }) {
   const [started, setStarted] = useState(false);
@@ -2063,6 +2444,13 @@ export default function ArcadiaCh2() {
   const [cmdInputIdx, setCmdInputIdx] = useState(0); // 0=エルツ,1=スウィフト,2=リンス,3=チョッパー
   // ターン実行キュー: { mode:"multi"|"single", cmds, targets } が入ったらuseEffectで実行
   const [pendingExecution, setPendingExecution] = useState(null);
+
+  // ── リズムゲーム状態 ──────────────────────────────────────────────────────
+  const [rhythmPhase,            setRhythmPhase           ] = useState(null);
+  const [rhythmTotalNotes,       setRhythmTotalNotes       ] = useState(8);
+  const [rhythmBpm,              setRhythmBpm              ] = useState(120);
+  const [rhythmResults,          setRhythmResults          ] = useState(null);
+  const [pendingRhythmExecution, setPendingRhythmExecution ] = useState(null);
 
   // ── SPDデバフ管理 ──────────────────────────────────────────────────────
   // 大地斬を使ったターンの次ターン、敵SPDを-5する残りターン数
@@ -3496,7 +3884,7 @@ export default function ArcadiaCh2() {
       const nmHp = nm.id === "eltz" ? hp : (partyHp[nm.id] ?? 0);
       if (nmHp > 0) break;
       // 戦闘不能 → dodgeを自動割り当てしてスキップ（healで復活させない）
-      newCmds[nm.id] = "dodge";
+      newCmds[nm.id] = "wait";
       newTgts[nm.id] = 0;
       nextIdx++;
     }
@@ -3511,7 +3899,9 @@ export default function ArcadiaCh2() {
       setPendingTargets({});
       setCmdInputIdx(0);
       setInputPhase("execute");
-      setPendingExecution({ mode:"multi", cmds:newCmds, targets:newTgts });
+      setRhythmResults(null);
+      setPendingRhythmExecution({ mode:"multi", cmds:newCmds, targets:newTgts });
+      setRhythmPhase("playing");
     }
   }, [victory, defeat, inputPhase, cmdInputIdx, pendingCommands, pendingTargets, hp, mp, partyHp, partyMp, showNotif, multiEnemies, equippedWeapon, getSkillCd]);
 
@@ -3533,7 +3923,7 @@ export default function ArcadiaCh2() {
       const nmHp = nm.id === "eltz" ? hp : (partyHp[nm.id] ?? 0);
       if (nmHp > 0) break;
       // 戦闘不能 → dodgeを自動割り当てしてスキップ（healで復活させない）
-      newCmds[nm.id] = "dodge";
+      newCmds[nm.id] = "wait";
       newTgts[nm.id] = 0;
       nextIdx++;
     }
@@ -3546,7 +3936,9 @@ export default function ArcadiaCh2() {
       setPendingTargets({});
       setCmdInputIdx(0);
       setInputPhase("execute");
-      setPendingExecution({ mode:"multi", cmds:newCmds, targets:newTgts });
+      setRhythmResults(null);
+      setPendingRhythmExecution({ mode:"multi", cmds:newCmds, targets:newTgts });
+      setRhythmPhase("playing");
     }
   }, [pendingTargetSelect, pendingTargets, pendingCommands, multiEnemies, hp, partyHp]);
 
@@ -3636,9 +4028,19 @@ export default function ArcadiaCh2() {
     }, 1100);
   }, [dodgeGridCollision]);
   // 5フェーズ構成：プリフェイズ → メインフェイズ → エンドフェイズ → コンボジャッジ → アップデート
-  const executeMultiTurn = useCallback((cmds, targets) => {
+  const executeMultiTurn = useCallback((cmds, targets, rhythmResultsArg) => {
     const enemies = multiEnemies;
     if (!enemies) return;
+    // ── リズム結果マップ ───────────────────────────────────────────────────
+    const _rhythmByMember = {};
+    if (rhythmResultsArg && Array.isArray(rhythmResultsArg)) {
+      rhythmResultsArg.forEach((r, i) => {
+        const key = currentPartyKeys[i];
+        if (key) _rhythmByMember[key] = r;
+      });
+    }
+    const rhythmForMember = (memberId) =>
+      _rhythmByMember[memberId] ?? { pct: 100, mult: 1.0, pierceCounter: false, critical: false };
 
     const spdBuff = partySpdBuff > 0 ? 3 : 0;
   // 修正後（2567行目・3171行目 共通）
@@ -3983,11 +4385,23 @@ export default function ArcadiaCh2() {
             elemMult  = isWeakHit ? 2.0 : isResist ? 0.5 : 1.0;
           }
         
+          // ── リズム判定 ───────────────────────────────────────────────────────
+          const _rhy = rhythmForMember(actor.id);
+          if (_rhy.pct < 50) {
+            const _hLbl = sk_def.hits > 1 ? ` (${sk_def.hits}hit)` : "";
+            logs.push(`${actor.icon}${actor.name} ${sk_def.icon}${sk_def.label}${_hLbl} → ✗MISS（${_rhy.pct}%）`);
+            skillsUsedThisTurn.set(skillId, actor.id);
+            continue;
+          }
+          const _rhythmDmgMult = _rhy.critical ? 2.0 : 1.0;
+          const _rhythmPierce  = _rhy.pierceCounter || sk_def.pierceCounter;
+          const _rhythmSfx     = _rhy.critical ? " ✦CRIT×2！" : _rhy.pct >= 80 ? " ◎貫通" : ` (${_rhy.pct}%)`;
+
           // ── ダメージ計算 ──────────────────────────────────────────────────────
           const { totalDmg } = resolveSkillDamage({
             skillId, atkBonus:memberAtkBonus, weaponType,
-            comboMult:comboAtkMult,
-            targetDef:    tEnemyDef?.pdef ?? 0,
+            comboMult:comboAtkMult * _rhythmDmgMult,
+            targetDef:    _rhythmPierce ? 0 : (tEnemyDef?.pdef ?? 0),
             targetMagDef: tEnemyDef?.mdef ?? 0,
             isStunned:isTargetStunned,
           });
@@ -4010,7 +4424,7 @@ export default function ArcadiaCh2() {
           const tEmName = tDef ? `${tDef.def.em}${tDef.def.name}` : "???";
           const hitLabel = sk_def.hits > 1 ? ` (${sk_def.hits}hit)` : "";
           const eLabel   = isWeakHit ? " ⚡弱点!" : elemMult===0.5 ? " 耐性½" : "";
-          logs.push(`${actor.icon}${actor.name} ${sk_def.icon}${sk_def.label}${hitLabel} → ${tEmName} ${finalDmg}ダメージ！${eLabel}`);
+          logs.push(`${actor.icon}${actor.name} ${sk_def.icon}${sk_def.label}${hitLabel} → ${tEmName} ${finalDmg}ダメージ！${eLabel}${_rhythmSfx ?? ""}`);
         
           // 属性ブレイク蓄積
           if (isWeakHit && !elemBreakTriggered) {
@@ -4686,6 +5100,28 @@ export default function ArcadiaCh2() {
   ]);
 
 
+  // ── リズムゲーム完了 → pendingExecution へ橋渡し ────────────────────────
+  useEffect(() => {
+    if (rhythmPhase !== "done" || !pendingRhythmExecution) return;
+    setRhythmPhase(null);
+    const exec = pendingRhythmExecution;
+    setPendingRhythmExecution(null);
+    setPendingExecution({ ...exec, rhythmResultsSnapshot: rhythmResults });
+  }, [rhythmPhase, pendingRhythmExecution, rhythmResults]);
+
+  // ── 戦闘開始時に難易度（音符数）を設定 ──────────────────────────────────
+  // BATTLE_NOTES_MAP は各バトルのsceneId/enemyIdをキーに音符数を設定します
+  // 例: const BATTLE_NOTES_MAP = { "dragon":16, "goblin":4, "default":8 };
+  // 実際のマップはソース内の BATTLE_NOTES_MAP 定数で管理してください
+  useEffect(() => {
+    if (!multiEnemies) return;
+    const sceneKey = multiEnemies.sceneId ?? multiEnemies.id ?? "default";
+    const notes = (typeof BATTLE_NOTES_MAP !== "undefined" && BATTLE_NOTES_MAP[sceneKey])
+      ?? (typeof BATTLE_NOTES_MAP !== "undefined" && BATTLE_NOTES_MAP["default"])
+      ?? 8;
+    setRhythmTotalNotes(notes);
+  }, [multiEnemies]);
+
   // @@SECTION:LOGIC_PENDING_EXEC ────────────────────────────────────────────────
   // pendingExecution → ターン実行（クロージャ問題の解決）
   // onCommand/onSelectTargetから直接execute*を呼ぶと古いクロージャを参照する場合がある。
@@ -4738,13 +5174,14 @@ export default function ArcadiaCh2() {
       return false;
     }));
 
+    const rhythSnap = exec.rhythmResultsSnapshot ?? null;
     if (hasOlgaAttack) {
       // アニメーション再生 → 完了後にターン実行
       playOlgaAtkEffect().then(() => {
-        executeMultiTurn(exec.cmds, exec.targets);
+        executeMultiTurn(exec.cmds, exec.targets, rhythSnap);
       });
     } else {
-      executeMultiTurn(exec.cmds, exec.targets);
+      executeMultiTurn(exec.cmds, exec.targets, rhythSnap);
     }
   }, [pendingExecution, executeMultiTurn, multiEnemies, playOlgaAtkEffect,
       takedownActive, sleepActive, straightShotActive, slowbladeActive]);
@@ -4755,11 +5192,13 @@ export default function ArcadiaCh2() {
     if (victory || defeat) return;
     if (inputPhase !== "command") return;
     // 全員 heal（行動不能扱い）を自動割り当て
-    const stunCmds = Object.fromEntries(PARTY_DEFS.map(m => [m.id, "heal"]));
+    const stunCmds = Object.fromEntries(PARTY_DEFS.map(m => [m.id, "wait"]));
     const stunTgts = Object.fromEntries(PARTY_DEFS.map(m => [m.id, 0]));
     setBtlLogs(prev => [...prev, `🦵 行動不能！ パーティは動けない（残${playerStunActive}T）`].slice(-20));
     setInputPhase("execute");
-    setPendingExecution({ mode:"multi", cmds:stunCmds, targets:stunTgts });
+    setRhythmPhase(null);
+    setPendingRhythmExecution(null);
+    setPendingExecution({ mode:"multi", cmds:stunCmds, targets:stunTgts, rhythmResultsSnapshot: null });
   }, [playerStunActive, inputPhase, victory, defeat, multiEnemies]);
   // @@SECTION:LOGIC_BATTLE_CMD ──────────────────────────────────────────────────
   // onCancelCommand（コマンドキャンセル）・exitBattle（バトル終了・勝敗処理）
@@ -6888,6 +7327,34 @@ export default function ArcadiaCh2() {
                     </div>
                   )}
                 </div>
+              );
+            })()}
+
+            {/* ── リズムゲームオーバーレイ ── */}
+            {rhythmPhase === "playing" && (() => {
+              const rCols   = currentPartyKeys.length;
+              const rLabels = currentPartyKeys.map(k => {
+                const c = ALL_CHAR_DEFS[k];
+                return c ? { icon: c.icon, name: c.name, charId: c.id } : { icon: "?", name: k, charId: null };
+              });
+              return (
+                <RhythmGame
+                  cols={rCols}
+                  colLabels={rLabels}
+                  totalNotes={rhythmTotalNotes}
+                  bpm={rhythmBpm}
+                  onComplete={(results) => {
+                    setRhythmResults(results);
+                    setRhythmPhase("done");
+                    const resLog = results.map((r, i) => {
+                      const k = currentPartyKeys[i];
+                      const c = ALL_CHAR_DEFS[k];
+                      const tag = r.pct >= 100 ? "✦CRIT" : r.pct >= 80 ? "◎貫通" : r.pct >= 50 ? "○HIT" : "✗MISS";
+                      return `${c?.icon ?? "?"}${r.pct}%${tag}`;
+                    }).join(" ");
+                    setBtlLogs(prev => [...prev, `🎵 ${resLog}`].slice(-20));
+                  }}
+                />
               );
             })()}
 
