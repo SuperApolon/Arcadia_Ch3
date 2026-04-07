@@ -281,14 +281,37 @@ const C = {
 // ── バトル難易度マップ（sceneId → 総音符数） ─────────────────────────────────
 // 各バトルの sceneId / id をキーに音符数を設定します
 // sceneId が一致しない場合は "default" の値が使われます
-const BATTLE_NOTES_MAP = {
-  "default":    8,   // デフォルト（未設定のバトル）
-  "tutorial":   4,   // チュートリアル（簡単）
-  "field":      6,   // フィールドバトル（普通）
-  "boss1":     12,   // ボス1
-  "boss2":     16,   // ボス2（難しい）
-  "final":     16,   // 最終ボス
-}; 
+const BATTLE_RHYTHM_MAP = {
+  // ─── デフォルト ───────────────────────────────────────────────
+  "default":           { notes:  8, bpm: 120 },
+
+  // ─── 第一章 ──────────────────────────────────────────────────
+  "seagull":           { notes:  8, bpm: 110 },
+  "shamerlot":         { notes:  8, bpm: 115 },
+  "shamerlot_lv3":     { notes: 10, bpm: 120 },
+  "shamerlot_lv5":     { notes: 12, bpm: 125 },
+
+  // ─── 第二章 ──────────────────────────────────────────────────
+  "woopy":             { notes:  8, bpm: 115 },
+  "moocat":            { notes: 12, bpm: 200 },
+  "mandragora":        { notes: 8, bpm: 60 },
+  "cocatris":          { notes: 10, bpm: 120 },
+  "cocatris_karma_a":  { notes: 18, bpm: 115 },
+  "cocatris_karma_b":  { notes: 18, bpm: 115 },
+  "cocatris_karma_c":  { notes: 18, bpm: 115 },
+  "cocatris_ponki_a":  { notes: 24, bpm: 120 },
+  "cocatris_ponki_b":  { notes: 24, bpm: 120 },
+  "cocatris_ponki_c":  { notes: 24, bpm: 120 },
+
+  // ─── PVP ─────────────────────────────────────────────────────
+  "pvp_donatello":     { notes: 36, bpm: 132 },
+  "pvp_kevin":         { notes: 36, bpm: 132 },
+  "pvp_chopper":       { notes: 36, bpm: 132 },
+
+  // ─── ボス ────────────────────────────────────────────────────
+  "olga":              { notes: 64, bpm: 240 },
+  "olga_pet":          { notes: 64, bpm: 240 },
+};
 // ─────────────────────────────────────────────────────【編集ガイド】
 //   敵のパターンを変えたいとき → 各エネミーの pattern: [...] だけ書き換える
 //   使える行動ID:
@@ -1914,21 +1937,76 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, onComplete }) {
   const TARGET_PCT   = 72; // アイコンの上端位置（%）
 
   const [gameNotes] = React.useState(() => {
+    // ── 音価テーブル（拍数）────────────────────────────────────────
+    // 1分音符=4拍, 2分=2拍, 4分=1拍, 8分=0.5拍, 16分=0.25拍
+    const NOTE_VALUES = [
+      { beats: 4,    weight: 1  },  // 1分音符（間が大きく空く）
+      { beats: 2,    weight: 3  },  // 2分音符
+      { beats: 1,    weight: 8  },  // 4分音符（基本）
+      { beats: 0.5,  weight: 6  },  // 8分音符
+      { beats: 0.25, weight: 3  },  // 16分音符（連符）
+    ];
+    const totalWeight = NOTE_VALUES.reduce((s, v) => s + v.weight, 0);
+  
+    // 重み付きランダムで音価を1つ選ぶ
+    const pickValue = () => {
+      let r = Math.random() * totalWeight;
+      for (const v of NOTE_VALUES) { r -= v.weight; if (r <= 0) return v.beats; }
+      return 1;
+    };
+  
+    // 同時発音（コード）を起こすか判定（確率）
+    const CHORD_PROB  = 0.18;  // 18%の確率で複数列同時発音
+    const MAX_CHORD   = Math.min(cols, 3); // 同時最大3列
+  
     const list = [];
-    let id = 0;
+    let id   = 0;
+    let beat = 0.5; // 開始オフセット
+  
+    // 各列に1音符ずつ保証（最初のパス）
+    const firstColOrder = Array.from({ length: cols }, (_, i) => i)
+      .sort(() => Math.random() - 0.5);
+  
+    // ── メイン生成ループ ────────────────────────────────────────
+    // totalNotes 個になるまでビートを進めながら音符を置いていく
     const safe = Math.max(cols, totalNotes);
-    for (let c = 0; c < cols; c++) {
-      const beat = 0.55 + c * 0.6 + Math.random() * 0.2;
-      list.push({ id: id++, col: c, beat, hit: false, result: null });
+    const guaranteedCols = new Set();
+  
+    while (list.length < safe) {
+      const remaining = safe - list.length;
+  
+      // 同時発音するか、何列同時か決める
+      const doChord = remaining > 1 && Math.random() < CHORD_PROB;
+      const chordSize = doChord
+        ? Math.min(remaining, 2 + Math.floor(Math.random() * (MAX_CHORD - 1)))
+        : 1;
+  
+      // 同時発音する列をランダムに選ぶ（重複なし）
+      const availCols = Array.from({ length: cols }, (_, i) => i)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, chordSize);
+  
+      // まだ1音符も保証されていない列を優先
+      if (list.length < cols) {
+        const needed = firstColOrder.filter(c => !guaranteedCols.has(c));
+        if (needed.length > 0) {
+          availCols[0] = needed[0];
+        }
+      }
+  
+      availCols.forEach(col => {
+        // 同時発音は同じbeatに置く（微小なゆらぎなし）
+        list.push({ id: id++, col, beat, hit: false, result: null });
+        guaranteedCols.add(col);
+      });
+  
+      // 次の音符までの間隔を音価で決める
+      beat += pickValue();
     }
-    const extra = safe - cols;
-    for (let i = 0; i < extra; i++) {
-      const c = i % cols;
-      const row = Math.floor(i / cols) + 1;
-      const beat = row * (cols * 0.6) + (i % cols) * 0.55 + Math.random() * 0.2;
-      list.push({ id: id++, col: c, beat, hit: false, result: null });
-    }
-    return list.sort((a, b) => a.beat - b.beat);
+  
+    return list
+      .slice(0, safe)
+      .sort((a, b) => a.beat !== b.beat ? a.beat - b.beat : a.col - b.col);
   });
 
   const gameNotesRef   = React.useRef(gameNotes.map(n => ({ ...n })));
@@ -5114,12 +5192,11 @@ export default function ArcadiaCh2() {
   // 例: const BATTLE_NOTES_MAP = { "dragon":16, "goblin":4, "default":8 };
   // 実際のマップはソース内の BATTLE_NOTES_MAP 定数で管理してください
   useEffect(() => {
-    if (!multiEnemies) return;
-    const sceneKey = multiEnemies.sceneId ?? multiEnemies.id ?? "default";
-    const notes = (typeof BATTLE_NOTES_MAP !== "undefined" && BATTLE_NOTES_MAP[sceneKey])
-      ?? (typeof BATTLE_NOTES_MAP !== "undefined" && BATTLE_NOTES_MAP["default"])
-      ?? 8;
-    setRhythmTotalNotes(notes);
+    if (!multiEnemies || multiEnemies.length === 0) return;
+    const sceneKey = multiEnemies.sceneId ?? multiEnemies[0]?.type ?? "default";
+    const cfg = BATTLE_RHYTHM_MAP[sceneKey] ?? BATTLE_RHYTHM_MAP["default"];
+    setRhythmTotalNotes(cfg.notes);
+    setRhythmBpm(cfg.bpm);           // ← この行を追加
   }, [multiEnemies]);
 
   // @@SECTION:LOGIC_PENDING_EXEC ────────────────────────────────────────────────
