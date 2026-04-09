@@ -330,6 +330,237 @@ const BATTLE_SKILLS = [
   { id:"heal",    label:"回復",      icon:"🧪",  color:"#f0c040", cost:0,  dmg:[0,0]   },
 ];
 
+// @@SECTION:THERMO_SYSTEM ─────────────────────────────────────────────────────
+// サーモグラフィカウンターシステム v2 -- プロシージャル生成版
+//
+// グリッドは cols × rows の可変サイズ。
+// セルインデックス: row * cols + col（左上=0、右下=cols*rows-1）
+// ゾーン帯: AIR(上1/3行)、BODY(中1/3行)、GND(下1/3行)
+//   ※ rows=4 のとき AIR=row0、BODY=row1-2、GND=row3
+//
+// 判定(チェビシェフ距離):
+//   0マス = 完全一致  → 1.0倍 (PERFECT)
+//   1マス = 隣接      → 0.6倍 (HIT)
+//   2マス以上         → 0.0  (MISS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── エネミーごとのグリッドサイズ定義 ─────────────────────────────────────────
+// cols: 横マス数、rows: 縦マス数
+// 未定義エネミーは DEFAULT_THERMO_GRID を使用
+const DEFAULT_THERMO_GRID = { cols: 3, rows: 3, noiseRange: 0.06, noiseInterval: 2.0 };
+const THERMO_GRID_DEF = {
+  // noiseRange    : 毎更新で初期値に加減算する乱数の最大幅（0.0〜1.0）
+  // noiseInterval : 更新間隔（秒）。小さいほど頻繁に揺れる
+  // ── 第一章 ──────────────────────────────────────────────────────────────
+  seagull:         { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 2.5 }, // おとなしい鳥、ゆっくり
+  shamerlot:       { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 2.0 },
+  shamerlot_lv3:   { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
+  shamerlot_lv5:   { cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.5 }, // Lv5は揺れも大きく
+  // ── 第二章 通常 ─────────────────────────────────────────────────────────
+  woopy:           { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 2.0 },
+  moocat:          { cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.0 }, // 速い敵＝激しく揺れる
+  mandragora:      { cols: 3, rows: 4, noiseRange: 0.3, noiseInterval: 3.0 }, // 鈍い草型＝ほぼ静止
+  cocatris:        { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
+  cocatris_karma_a:{ cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
+  cocatris_karma_b:{ cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.5 },
+  cocatris_karma_c:{ cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
+  cocatris_ponki_a:{ cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.3 },
+  cocatris_ponki_b:{ cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.5 },
+  cocatris_ponki_c:{ cols: 4, rows: 4, noiseRange: 0.3, noiseInterval: 0.8 }, // 最強コカトリス＝超激しい
+  // ── PVP ────────────────────────────────────────────────────────────────
+  pvp_donatello:   { cols: 5, rows: 5, noiseRange: 0.3, noiseInterval: 1.2 }, // 槍使い＝速くて広い
+  pvp_kevin:       { cols: 4, rows: 4, noiseRange: 0.3, noiseInterval: 2.0 },
+  pvp_chopper:     { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
+  // ── ボス ────────────────────────────────────────────────────────────────
+  olga:            { cols: 5, rows: 7, noiseRange: 0.3, noiseInterval: 0.7 }, // ボス＝最凶の揺れ
+  olga_pet:        { cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.2 },
+};
+
+// ── ゾーン帯傾向定義 ──────────────────────────────────────────────────────
+// actionId ごとに AIR/BODY/GND の「高熱傾向重み」と「スイートスポット候補帯」を定義
+// sweetZone: "AIR"|"BODY"|"GND"|"ANY"|"CHECKER"
+//   CHECKER は雷属性専用（チェッカーボード斑点生成）
+// heatProfile: [airWeight, bodyWeight, gndWeight]（相対値、合計任意）
+const THERMO_ACTION_PROFILE = {
+  atk:           { heatProfile: [0.15, 0.90, 0.20], sweetZone: "BODY",    isColdSpot: false },
+  counter:       { heatProfile: [0.10, 0.85, 0.35], sweetZone: "BODY",    isColdSpot: false },
+  dodge:         { heatProfile: [0.05, 0.20, 0.95], sweetZone: "GND",     isColdSpot: false },
+  unavoidable:   { heatProfile: [0.70, 0.99, 0.70], sweetZone: "BODY",    isColdSpot: false },
+  atk_all:       { heatProfile: [0.99, 0.70, 0.15], sweetZone: "AIR",     isColdSpot: false },
+  enrage:        { heatProfile: [0.20, 0.99, 0.20], sweetZone: "BODY",    isColdSpot: false },
+  heal:          { heatProfile: [0.05, 0.99, 0.05], sweetZone: "BODY",    isColdSpot: false },
+  overheal:      { heatProfile: [0.05, 0.99, 0.05], sweetZone: "BODY",    isColdSpot: false },
+  reverse:       { heatProfile: [0.50, 0.80, 0.50], sweetZone: "ANY",     isColdSpot: false },
+  provoke:       { heatProfile: [0.20, 0.90, 0.25], sweetZone: "BODY",    isColdSpot: false },
+  takedown:      { heatProfile: [0.05, 0.30, 0.99], sweetZone: "GND",     isColdSpot: false },
+  sleep:         { heatProfile: [0.10, 0.99, 0.10], sweetZone: "BODY",    isColdSpot: false },
+  // ── 属性 ───────────────────────────────────────────────────────────────
+  elem_fire:     { heatProfile: [0.90, 0.75, 0.10], sweetZone: "AIR",     isColdSpot: false },
+  fireball:      { heatProfile: [0.95, 0.72, 0.08], sweetZone: "AIR",     isColdSpot: false },
+  elem_ice:      { heatProfile: [0.08, 0.18, 0.92], sweetZone: "GND",     isColdSpot: true  },
+  water_sphere:  { heatProfile: [0.10, 0.18, 0.90], sweetZone: "GND",     isColdSpot: true  },
+  air_cutter:    { heatProfile: [0.05, 0.40, 0.65], sweetZone: "GND",     isColdSpot: true  },
+  elem_thunder:  { heatProfile: [0.50, 0.50, 0.50], sweetZone: "CHECKER", isColdSpot: false },
+  thunderbolt:   { heatProfile: [0.50, 0.50, 0.50], sweetZone: "CHECKER", isColdSpot: false },
+  elem_earth:    { heatProfile: [0.05, 0.20, 0.99], sweetZone: "GND",     isColdSpot: false },
+  stone_blitz:   { heatProfile: [0.05, 0.18, 0.99], sweetZone: "GND",     isColdSpot: false },
+  // ── 武器スキル ─────────────────────────────────────────────────────────
+  trick_attack:  { heatProfile: [0.08, 0.88, 0.22], sweetZone: "BODY",    isColdSpot: false },
+  ten_bite:      { heatProfile: [0.10, 0.90, 0.18], sweetZone: "BODY",    isColdSpot: false },
+  stinger_bite:  { heatProfile: [0.05, 0.99, 0.08], sweetZone: "BODY",    isColdSpot: false },
+  flat_strike:   { heatProfile: [0.10, 0.88, 0.15], sweetZone: "BODY",    isColdSpot: false },
+  biker_slash:   { heatProfile: [0.18, 0.92, 0.18], sweetZone: "BODY",    isColdSpot: false },
+  sansanka:      { heatProfile: [0.12, 0.92, 0.14], sweetZone: "BODY",    isColdSpot: false },
+  penetrate:     { heatProfile: [0.08, 0.90, 0.12], sweetZone: "BODY",    isColdSpot: false },
+  seesaw:        { heatProfile: [0.10, 0.85, 0.35], sweetZone: "BODY",    isColdSpot: false },
+  windmill:      { heatProfile: [0.55, 0.85, 0.32], sweetZone: "AIR",     isColdSpot: false },
+  spiral_axe:    { heatProfile: [0.15, 0.88, 0.38], sweetZone: "BODY",    isColdSpot: false },
+  onslaught:     { heatProfile: [0.22, 0.90, 0.40], sweetZone: "BODY",    isColdSpot: false },
+  double_arrow:  { heatProfile: [0.50, 0.32, 0.08], sweetZone: "AIR",     isColdSpot: false },
+  straight_shot: { heatProfile: [0.65, 0.28, 0.05], sweetZone: "AIR",     isColdSpot: false },
+  arrow_rain:    { heatProfile: [0.90, 0.52, 0.12], sweetZone: "AIR",     isColdSpot: false },
+  slow_blade:    { heatProfile: [0.08, 0.90, 0.12], sweetZone: "BODY",    isColdSpot: false },
+  deep_edge:     { heatProfile: [0.05, 0.75, 0.05], sweetZone: "BODY",    isColdSpot: false },
+  // ── ボス専用 ───────────────────────────────────────────────────────────
+  LightningSlash:{ heatProfile: [0.50, 0.50, 0.50], sweetZone: "CHECKER", isColdSpot: false },
+  StellaFritz:   { heatProfile: [0.99, 0.96, 0.92], sweetZone: "ANY",     isColdSpot: false },
+};
+
+// ── ゾーン帯ヘルパー ──────────────────────────────────────────────────────
+// rows に応じて各行がどのゾーンに属するかを返す
+const getZoneForRow = (row, rows) => {
+  const third = rows / 3;
+  if (row < third)             return "AIR";
+  if (row < third * 2)         return "BODY";
+  return "GND";
+};
+
+// ゾーン名 → そのゾーンに属する行インデックス配列
+const getRowsForZone = (zone, rows) => {
+  const result = [];
+  for (let r = 0; r < rows; r++) {
+    if (getZoneForRow(r, rows) === zone) result.push(r);
+  }
+  // "ANY" は全行
+  return result.length > 0 ? result : Array.from({ length: rows }, (_, i) => i);
+};
+
+// ── メイン生成関数 ────────────────────────────────────────────────────────
+// actionId, cols, rows を受け取り { heatMap, sweetSpot, isColdSpot } を返す
+// heatMap: number[] (長さ cols*rows, 各セルの熱値 0.0〜1.0)
+// sweetSpot: number (セルインデックス)
+// isColdSpot: boolean
+const generateThermoState = (actionId, cols, rows) => {
+  const profile = THERMO_ACTION_PROFILE[actionId] ?? THERMO_ACTION_PROFILE["atk"];
+  const { heatProfile, sweetZone, isColdSpot } = profile;
+  const cells = cols * rows;
+
+  // ── チェッカーボード専用（雷系）────────────────────────────────────────
+  if (sweetZone === "CHECKER") {
+    const heat = Array.from({ length: cells }, (_, i) => {
+      const row = Math.floor(i / cols), col = i % cols;
+      const base = (row + col) % 2 === 0 ? 0.92 : 0.06;
+      return Math.min(1, Math.max(0, base + (Math.random() - 0.5) * 0.10));
+    });
+    // スイートスポット＝熱マスのランダム1つ
+    const hotCells = heat.map((h, i) => ({ i, h })).filter(x => x.h > 0.5);
+    const sweet = hotCells[Math.floor(Math.random() * hotCells.length)]?.i ?? 0;
+    return { heatMap: heat, sweetSpot: sweet, isColdSpot: false };
+  }
+
+  // ── 通常生成 ─────────────────────────────────────────────────────────
+  // 1. スイートスポット候補行を決定
+  const candidateRows = sweetZone === "ANY"
+    ? Array.from({ length: rows }, (_, i) => i)
+    : getRowsForZone(sweetZone, rows);
+  const sweetRow = candidateRows[Math.floor(Math.random() * candidateRows.length)];
+  const sweetCol = Math.floor(Math.random() * cols);
+  const sweetSpot = sweetRow * cols + sweetCol;
+
+  // 2. 各セルの熱値を生成
+  // ゾーン傾向ベース + スイートスポット距離減衰 + ノイズ
+  const [wAir, wBody, wGnd] = heatProfile;
+  const heat = Array.from({ length: cells }, (_, i) => {
+    const row = Math.floor(i / cols), col = i % cols;
+    const zone = getZoneForRow(row, rows);
+    const zoneBase = zone === "AIR" ? wAir : zone === "BODY" ? wBody : wGnd;
+    const normBase = zoneBase / Math.max(wAir, wBody, wGnd, 0.001);
+
+    // スイートスポットからのチェビシェフ距離
+    const sr = Math.floor(sweetSpot / cols), sc = sweetSpot % cols;
+    const dist = Math.max(Math.abs(row - sr), Math.abs(col - sc));
+    // ガウス的減衰: dist0=1.0, dist1=0.65, dist2=0.30, dist3+=0.10
+    const distDecay = dist === 0 ? 1.0
+                    : dist === 1 ? 0.65
+                    : dist === 2 ? 0.30
+                    : 0.10 + Math.random() * 0.08;
+
+    // ブレンド（ゾーン傾向 60% + 距離減衰 40%）
+    const blended = normBase * 0.60 + distDecay * 0.40;
+    // ノイズ
+    const noise = (Math.random() - 0.5) * 0.14;
+    return Math.min(1, Math.max(0.02, blended + noise));
+  });
+
+  // 3. スイートスポットを必ず最熱に（冷帯は最冷に）
+  const forceIdx = sweetSpot;
+  if (isColdSpot) {
+    heat[forceIdx] = Math.min(heat[forceIdx], 0.04 + Math.random() * 0.04);
+  } else {
+    heat[forceIdx] = Math.max(heat[forceIdx], 0.90 + Math.random() * 0.09);
+  }
+
+  return { heatMap: heat, sweetSpot, isColdSpot };
+};
+
+// ── チェビシェフ距離による倍率 ─────────────────────────────────────────────
+const getThermoCounterMult = (selectedIdx, sweetSpot, cols) => {
+  const r1 = Math.floor(selectedIdx / cols), c1 = selectedIdx % cols;
+  const r2 = Math.floor(sweetSpot   / cols), c2 = sweetSpot   % cols;
+  const dist = Math.max(Math.abs(r1 - r2), Math.abs(c1 - c2));
+  if (dist === 0) return 1.0;
+  if (dist === 1) return 0.6;
+  return 0.0;
+};
+
+// ── 熱値 → RGB カラー ─────────────────────────────────────────────────────
+const thermoColor = (heat, isColdSpot = false) => {
+  const h = isColdSpot ? 1.0 - heat : heat;
+  if (h < 0.25) {
+    const t = h / 0.25;
+    return `rgb(${Math.round(20+t*10)},${Math.round(40+t*120)},${Math.round(160+t*80)})`;
+  } else if (h < 0.50) {
+    const t = (h - 0.25) / 0.25;
+    return `rgb(${Math.round(30+t*90)},${Math.round(160+t*80)},${Math.round(240-t*200)})`;
+  } else if (h < 0.75) {
+    const t = (h - 0.50) / 0.25;
+    return `rgb(${Math.round(120+t*135)},${Math.round(240-t*80)},${Math.round(40-t*40)})`;
+  } else {
+    const t = (h - 0.75) / 0.25;
+    return `rgb(255,${Math.round(160-t*160)},0)`;
+  }
+};
+
+// ── ゾーン名（UI表示用） ──────────────────────────────────────────────────
+const THERMO_ZONE_COLOR = { AIR: "#88ddff44", BODY: "#ffffff22", GND: "#cc884433" };
+
+// ── ヒントテキスト（actionId → { text, color }）────────────────────────────
+const getThermoHint = (id) => {
+  const p = THERMO_ACTION_PROFILE[id];
+  if (!p) return { text: "⚔ 力点を突け", color: "#00ffcc" };
+  if (p.sweetZone === "CHECKER")
+    return { text: "⚡ 斑点パターン----光る格子を狙え", color: "#ffee44" };
+  if (p.isColdSpot)
+    return { text: "❄ 最冷点が力点----最も青いマスを狙え", color: "#88ddff" };
+  if (p.sweetZone === "AIR")
+    return { text: "↑ 力が上部に集まる----AIR帯を狙え", color: "#aaddff" };
+  if (p.sweetZone === "GND")
+    return { text: "↓ 力が根元に集まる----GND帯を狙え", color: "#66cc44" };
+  if (p.sweetZone === "ANY")
+    return { text: "◎ 力点は全域に拡散----熱源を探せ", color: "#f0c040" };
+  return { text: "⚔ 腕・胴に力が集まる----BODY帯を狙え", color: "#00ffcc" };
+};
+
 // ─── 回避グリッドコリジョンマップ（マルチパターン対応） ─────────────────
 //
 // 番号レイアウト:  0 1 2
@@ -1941,7 +2172,7 @@ const LOC_TO_SCENE_IMG = {
 const RHYTHM_PERFECT_WINDOW_PCT = 7;
 const RHYTHM_GOOD_WINDOW_PCT    = 15;
 
-function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, noteOptions = {}, onComplete }) {
+function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, noteOptions = {}, disabledCols = [], onComplete }) {
   const {
     allowChord     = true,
     allowHold      = false,
@@ -2234,11 +2465,11 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, noteOptions = {}, 
     const onKeyDown = (e) => {
       if (e.repeat) return;
       const c = KEY_MAP[e.key.toLowerCase()];
-      if (c !== undefined && c < cols) handlePress(c);
+      if (c !== undefined && c < cols && !disabledCols.includes(c)) handlePress(c);
     };
     const onKeyUp = (e) => {
       const c = KEY_MAP[e.key.toLowerCase()];
-      if (c !== undefined && c < cols) handleRelease(c);
+      if (c !== undefined && c < cols && !disabledCols.includes(c)) handleRelease(c);
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup",   onKeyUp);
@@ -2295,13 +2526,14 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, noteOptions = {}, 
           const charImgUrl = getCharImgUrl(label);
           const isHolding  = holdingColsRef.current[col] !== null;
           const holdProg   = holdProgress[col] ?? 0;
+          const isDisabled = disabledCols.includes(col);
 
-          const hasNearNote = colNotes.some(n => {
+          const hasNearNote = !isDisabled && colNotes.some(n => {
             if (n.hit) return false;
             const y = getNoteY(n, elapsed);
             return Math.abs(y - TARGET_PCT) <= RHYTHM_GOOD_WINDOW_PCT;
           });
-          const hasPerfectNote = colNotes.some(n => {
+          const hasPerfectNote = !isDisabled && colNotes.some(n => {
             if (n.hit) return false;
             const y = getNoteY(n, elapsed);
             return Math.abs(y - TARGET_PCT) <= RHYTHM_PERFECT_WINDOW_PCT;
@@ -2309,21 +2541,26 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, noteOptions = {}, 
 
           return (
             <div key={col}
-              onPointerDown={(e)=>{e.preventDefault();handlePress(col);}}
-              onPointerUp={(e)=>{e.preventDefault();handleRelease(col);}}
-              onPointerLeave={(e)=>{e.preventDefault();handleRelease(col);}}
+              onPointerDown={(e)=>{e.preventDefault(); if(!isDisabled) handlePress(col);}}
+              onPointerUp={(e)=>{e.preventDefault(); if(!isDisabled) handleRelease(col);}}
+              onPointerLeave={(e)=>{e.preventDefault(); if(!isDisabled) handleRelease(col);}}
               style={{
                 flex:1, position:"relative", display:"flex", flexDirection:"column",
-                cursor:"pointer", userSelect:"none", touchAction:"none",
+                cursor: isDisabled ? "default" : "pointer",
+                userSelect:"none", touchAction:"none",
                 borderRight: col<cols-1 ? "1px solid #1a4a6a22" : "none",
-                background: isHolding
+                background: isDisabled
+                  ? "rgba(20,20,30,0.7)"
+                  : isHolding
                   ? `linear-gradient(180deg,transparent 30%,${colColor}28 100%)`
                   : hasPerfectNote
                   ? `linear-gradient(180deg,transparent 50%,${colColor}18 100%)`
                   : hasNearNote
                   ? `linear-gradient(180deg,transparent 60%,${colColor}0d 100%)`
                   : `linear-gradient(180deg,transparent 70%,${colColor}05 100%)`,
-                outline: hasPerfectNote ? `1px solid ${colColor}44` : "none",
+                outline: (!isDisabled && hasPerfectNote) ? `1px solid ${colColor}44` : "none",
+                opacity: isDisabled ? 0.38 : 1,
+                filter: isDisabled ? "grayscale(1) brightness(0.55)" : "none",
               }}>
 
               {/* ── ホールド中：進捗バー（左端縦帯） ──────────────────── */}
@@ -2540,7 +2777,532 @@ function RhythmGame({ cols, colLabels, totalNotes, bpm = 120, noteOptions = {}, 
     </div>
   );
 }
-  
+
+const ThermoCounterUI = ({
+  actionId,
+  enemyImgUrl, enemyName, enemyIcon,
+  cols = 3, rows = 3,
+  noiseRange    = 0.06,   // 初期値に対する加減算の最大幅
+  noiseInterval = 2.0,    // 更新間隔（秒）
+  readyDuration = 3,      // マス選択前の READY カウント秒数（この間もノイズを走らせる）
+  onConfirm, onCancel,
+}) => {
+  // バトルごとに1回生成されたサーモステートを受け取る想定だが、
+  // UIが独立して生成してもよい（どちらでも動作する）
+  const [thermoState] = React.useState(() =>
+    generateThermoState(actionId, cols, rows)
+  );
+  const { heatMap: baseHeatMap, sweetSpot, isColdSpot } = thermoState;
+
+  // ── 揺らぎ表示用 heatMap ───────────────────────────────────────────────
+  // ready フェーズから即時ノイズを開始し、select フェーズ移行時には
+  // 既に十分揺らいだ状態になっている。判定は常に sweetSpot（固定）基準。
+  const [liveHeatMap, setLiveHeatMap] = useState(() => baseHeatMap);
+  const noiseTimerRef = useRef(null);
+
+  const [selected,   setSelected  ] = useState(null);
+  // phase: "ready" → "select" → "result"
+  const [phase,      setPhase     ] = useState("ready");
+  const [readyLeft,  setReadyLeft ] = useState(readyDuration);
+  const [timeLeft,   setTimeLeft  ] = useState(10);
+  const [scanLines,  setScanLines ] = useState([]);
+  const scanRef   = useRef(null);
+  const timerRef  = useRef(null);
+  const readyRef  = useRef(null);
+
+  const hint = getThermoHint(actionId);
+
+  // ── ノイズ更新タイマー ─────────────────────────────────────────────────
+  // ready フェーズ開始直後から起動し、select フェーズでも継続して走らせる。
+  // result フェーズになったら停止して baseHeatMap（真の値）を表示する。
+  useEffect(() => {
+    if (phase === "result") {
+      clearInterval(noiseTimerRef.current);
+      setLiveHeatMap(baseHeatMap); // 確定後は正確な値を表示
+      return;
+    }
+    // ready / select 中は常にノイズを更新
+    const applyNoise = () => {
+      setLiveHeatMap(baseHeatMap.map(base => {
+        const delta = (Math.random() * 2 - 1) * noiseRange;
+        return Math.min(1, Math.max(0.02, base + delta));
+      }));
+    };
+    applyNoise(); // 即時1回適用（ready開始時点でノイズを乗せる）
+    noiseTimerRef.current = setInterval(applyNoise, noiseInterval * 1000);
+    return () => clearInterval(noiseTimerRef.current);
+  }, [phase]); // eslint-disable-line
+
+  // ── READY カウントダウン ───────────────────────────────────────────────
+  // ready フェーズ中のみ動作。完了したら select フェーズへ移行する。
+  useEffect(() => {
+    if (phase !== "ready") return;
+    setReadyLeft(readyDuration);
+    let rem = readyDuration;
+    readyRef.current = setInterval(() => {
+      rem--;
+      setReadyLeft(rem);
+      if (rem <= 0) {
+        clearInterval(readyRef.current);
+        setPhase("select");
+      }
+    }, 1000);
+    return () => clearInterval(readyRef.current);
+  }, [phase]); // eslint-disable-line
+
+  // 走査線エフェクト
+  useEffect(() => {
+    let frame = 0;
+    scanRef.current = setInterval(() => {
+      frame++;
+      setScanLines(Array.from({ length: 2 }, () => ({
+        id: frame * 100 + Math.random(),
+        y:  Math.random() * 100,
+        opacity: 0.05 + Math.random() * 0.08,
+      })));
+    }, 280);
+    return () => clearInterval(scanRef.current);
+  }, []);
+
+  // 10秒制限タイマー
+  useEffect(() => {
+    if (phase !== "select") return;
+    setTimeLeft(10);
+    let rem = 10;
+    timerRef.current = setInterval(() => {
+      rem--;
+      setTimeLeft(rem);
+      if (rem <= 0) {
+        clearInterval(timerRef.current);
+        // タイムアウト → 失敗（mult=0）
+        setSelected(-1);
+        setPhase("result");
+        setTimeout(() => onConfirm(0, -1), 1200);
+      }
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [phase]); // eslint-disable-line
+
+  const handleSelect = (idx) => {
+    if (phase !== "select") return;
+    clearInterval(timerRef.current);
+    setSelected(idx);
+    setPhase("result");
+    const mult = getThermoCounterMult(idx, sweetSpot, cols);
+    setTimeout(() => onConfirm(mult, idx), 1200);
+  };
+
+  const isTimeout   = selected === -1;
+  const mult        = (selected !== null && selected !== -1) ? getThermoCounterMult(selected, sweetSpot, cols) : (isTimeout ? 0 : null);
+  const isCritical  = mult !== null && mult >= 1.0;
+  const isSuccess   = mult !== null && mult >= 0.6;
+  const resultLabel = mult === null ? ""
+    : isTimeout   ? "⏱ TIME OUT！"
+    : isCritical  ? "🎯 PERFECT COUNTER！"
+    : isSuccess   ? "✅ COUNTER HIT"
+    : "❌ MISS";
+  const resultColor = mult === null ? "#00c8ff"
+    : isTimeout   ? "#ff4466"
+    : isCritical  ? "#f0c040"
+    : isSuccess   ? "#00ffcc"
+    : "#ff4466";
+
+  // スイートスポットからの距離
+  const distToSweet = selected !== null ? (() => {
+    const r1 = Math.floor(selected  / cols), c1 = selected  % cols;
+    const r2 = Math.floor(sweetSpot / cols), c2 = sweetSpot % cols;
+    return Math.max(Math.abs(r1 - r2), Math.abs(c1 - c2));
+  })() : null;
+
+  // セルサイズ（グリッドが大きいほど小さく）
+  const CELL_PX = Math.max(36, Math.min(62, Math.floor(180 / Math.max(cols, rows))));
+  const CELL    = `${CELL_PX}px`;
+  const FONT_SZ = Math.max(7, Math.floor(CELL_PX * 0.16));
+
+  // 最熱/最冷マス判定（アニメーション用） -- baseHeatMap 固定（判定基準と一致させる）
+  // liveHeatMap のノイズはフェイクなので extremeIdx を追従させない
+  const extremeIdx = isColdSpot
+    ? baseHeatMap.indexOf(Math.min(...baseHeatMap))
+    : baseHeatMap.indexOf(Math.max(...baseHeatMap));
+
+  return (
+    <div style={{
+      position:"absolute", inset:0, zIndex:250,
+      background:"rgba(2,4,8,0.55)",
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      padding:"10px 8px",
+      animation:"fadeIn 0.18s ease",
+      fontFamily:"'Share Tech Mono',monospace",
+      overflow:"hidden",
+    }}>
+      {/* 走査線 */}
+      {scanLines.map(sl => (
+        <div key={sl.id} style={{
+          position:"absolute", left:0, right:0, top:`${sl.y}%`, height:1,
+          background:`rgba(0,200,255,${sl.opacity})`,
+          pointerEvents:"none", zIndex:0,
+        }}/>
+      ))}
+      <div style={{
+        position:"absolute", inset:0, pointerEvents:"none", zIndex:0,
+        backgroundImage:"repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,200,255,0.010) 3px,rgba(0,200,255,0.010) 4px)",
+      }}/>
+
+      {/* ヘッダー */}
+      <div style={{position:"relative",zIndex:1,width:"100%",marginBottom:4,textAlign:"center"}}>
+        <div style={{fontSize:7,letterSpacing:4,color:"#88ddffcc",marginBottom:2,
+          background:"rgba(2,6,12,0.7)",borderRadius:3,padding:"1px 6px",display:"inline-block"}}>
+          🌡 THERMO ANALYSIS
+        </div>
+        <div style={{fontSize:10,fontWeight:700,letterSpacing:1,color:"#ff8866",
+          textShadow:"0 0 8px rgba(255,100,50,0.8)",background:"rgba(2,6,12,0.6)",
+          borderRadius:3,padding:"1px 8px",display:"inline-block",marginLeft:4}}>
+          {enemyIcon} {enemyName}
+        </div>
+        <div style={{
+          fontSize:7, marginTop:2, letterSpacing:1, color:hint.color,
+          padding:"1px 6px", border:`1px solid ${hint.color}55`, borderRadius:3,
+          display:"inline-block", background:`rgba(2,6,12,0.65)`,
+        }}>
+          {hint.text}
+        </div>
+      </div>
+
+      {/* グリッド本体 */}
+      <div style={{position:"relative",zIndex:1,marginBottom:4}}>
+
+        {/* ゾーンサイドバー（行ラベル） */}
+        <div style={{
+          position:"absolute", left:`-${FONT_SZ * 3.2}px`, top:0, bottom:0,
+          display:"flex", flexDirection:"column",
+          justifyContent:"space-around",
+          zIndex:2, pointerEvents:"none",
+        }}>
+          {Array.from({ length: rows }, (_, r) => {
+            const z = getZoneForRow(r, rows);
+            const zc = z === "AIR" ? "#88ddff" : z === "BODY" ? "#cccccc" : "#cc8844";
+            return (
+              <div key={r} style={{fontSize:6,letterSpacing:1,color:zc,textAlign:"right",lineHeight:1}}>
+                {z}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* 列ラベル（上部） */}
+        <div style={{
+          display:"flex", gap:2, marginBottom:2, paddingLeft:0,
+          zIndex:2, position:"relative",
+        }}>
+          {Array.from({ length: cols }, (_, c) => (
+            <div key={c} style={{
+              width:CELL, textAlign:"center", fontSize:6,
+              color:"#1a4a6a", letterSpacing:1,
+            }}>
+              {c + 1}
+            </div>
+          ))}
+        </div>
+
+        {/* グリッドセル */}
+        <div style={{
+          display:"grid",
+          gridTemplateColumns:`repeat(${cols}, ${CELL})`,
+          gap:2, position:"relative", zIndex:1,
+        }}>
+          {liveHeatMap.map((h, idx) => {
+            const row      = Math.floor(idx / cols);
+            const zone     = getZoneForRow(row, rows);
+            const bgColor  = thermoColor(h, isColdSpot);
+            const isSelected  = selected === idx;
+            const isSweet     = phase === "result" && sweetSpot === idx;
+            const isExtreme   = idx === extremeIdx;
+            const displayPct  = Math.round((isColdSpot ? 1 - h : h) * 100);
+
+            // 行ごとのゾーン区切り線
+            const borderTop = row > 0 && getZoneForRow(row - 1, rows) !== zone
+              ? (zone === "BODY" ? "1px solid rgba(255,255,255,0.30)"
+               : zone === "GND"  ? "1px solid rgba(200,150,80,0.40)"
+               : "none")
+              : "none";
+
+            return (
+              <button
+                key={idx}
+                disabled={phase !== "select"}
+                onClick={() => handleSelect(idx)}
+                style={{
+                  width:CELL, height:CELL,
+                  background:bgColor,
+                  border: isSelected ? "2px solid #ffffff"
+                        : isSweet && phase === "result" ? "2px solid #f0c040"
+                        : "1px solid rgba(255,255,255,0.10)",
+                  borderTop: isSelected || (isSweet && phase === "result")
+                    ? undefined : borderTop || "1px solid rgba(255,255,255,0.10)",
+                  borderRadius:3,
+                  cursor: phase === "select" ? "pointer" : "default",
+                  position:"relative", overflow:"hidden",
+                  transition:"transform 0.08s, box-shadow 0.12s",
+                  boxShadow: isExtreme && phase === "select"
+                    ? `0 0 10px ${bgColor}cc, inset 0 0 6px rgba(255,255,255,0.15)`
+                    : "none",
+                  animation: isExtreme && phase === "select"
+                    ? "comboPulse 1.4s ease-in-out infinite" : "none",
+                }}
+                onMouseEnter={e => {
+                  if (phase !== "select") return;
+                  e.currentTarget.style.transform = "scale(1.06)";
+                  e.currentTarget.style.border = "2px solid rgba(255,255,255,0.85)";
+                  e.currentTarget.style.zIndex = "2";
+                }}
+                onMouseLeave={e => {
+                  if (phase !== "select") return;
+                  e.currentTarget.style.transform = "scale(1)";
+                  e.currentTarget.style.border = isSelected
+                    ? "2px solid #ffffff" : "1px solid rgba(255,255,255,0.10)";
+                  e.currentTarget.style.zIndex = "1";
+                }}
+              >
+                {/* ゾーン背景 */}
+                <div style={{
+                  position:"absolute", inset:0,
+                  background: THERMO_ZONE_COLOR[zone],
+                  pointerEvents:"none", mixBlendMode:"overlay",
+                }}/>
+                {/* 熱値% */}
+                <div style={{
+                  position:"absolute", bottom:1, right:2,
+                  fontSize:FONT_SZ,
+                  color: displayPct > 72 ? "rgba(0,0,0,0.65)" : "rgba(255,255,255,0.65)",
+                  pointerEvents:"none",
+                  fontFamily:"'Share Tech Mono',monospace", lineHeight:1,
+                }}>
+                  {displayPct}
+                </div>
+                {/* 結果アイコン */}
+                {isSelected && (
+                  <div style={{
+                    position:"absolute", inset:0,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize: CELL_PX * 0.35,
+                    animation:"comboPop 0.3s cubic-bezier(0.34,1.56,0.64,1)",
+                    background:"rgba(0,0,0,0.35)",
+                  }}>
+                    {isCritical ? "🎯" : isSuccess ? "✅" : "❌"}
+                  </div>
+                )}
+                {/* スイートスポット表示（結果フェーズ） */}
+                {isSweet && !isSelected && (
+                  <div style={{
+                    position:"absolute", inset:0,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize: CELL_PX * 0.32,
+                    animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)",
+                    background:"rgba(0,0,0,0.28)",
+                  }}>⭐</div>
+                )}
+                {isSelected && (
+                  <div style={{
+                    position:"absolute", inset:0,
+                    border:"2px solid rgba(255,255,255,0.55)",
+                    borderRadius:3, pointerEvents:"none",
+                    animation:"comboPulse 0.6s ease-out",
+                  }}/>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* READY カウントダウンオーバーレイ（グリッド全体を覆う） */}
+        {phase === "ready" && (
+          <div style={{
+            position:"absolute", inset:0, zIndex:10,
+            display:"flex", flexDirection:"column",
+            alignItems:"center", justifyContent:"center",
+            background:"rgba(2,4,10,0.90)",
+            borderRadius:4,
+            pointerEvents:"all",
+          }}>
+            <div style={{
+              fontSize:7, letterSpacing:6, color:"#4a7a9a",
+              fontFamily:"'Share Tech Mono',monospace", marginBottom:4,
+            }}>ANALYZING...</div>
+            <div style={{
+              fontSize:48, fontWeight:900, lineHeight:1,
+              color:"#00c8ff",
+              textShadow:"0 0 24px #00c8ffaa, 0 0 48px #00c8ff33",
+              fontFamily:"'Share Tech Mono',monospace",
+              animation:"comboPulse 0.9s ease-in-out infinite",
+            }}>
+              {readyLeft}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 凡例（コンパクト） */}
+      <div style={{
+        position:"relative", zIndex:1,
+        display:"flex", gap:4, marginBottom:4,
+        flexWrap:"nowrap", justifyContent:"center", alignItems:"center",
+        background:"rgba(2,6,12,0.65)", borderRadius:4, padding:"2px 8px",
+      }}>
+        {[
+          ["rgb(20,80,200)","冷"],
+          ["rgb(0,200,100)","中"],
+          ["rgb(220,180,0)","熱"],
+          ["rgb(255,80,0)",  "最熱"],
+        ].map(([col, lbl]) => (
+          <div key={lbl} style={{display:"flex",alignItems:"center",gap:2}}>
+            <div style={{width:7,height:7,background:col,borderRadius:1,flexShrink:0}}/>
+            <span style={{fontSize:6,color:"#88aabb"}}>{lbl}</span>
+          </div>
+        ))}
+        {isColdSpot && (
+          <span style={{fontSize:6,color:"#88ddff",marginLeft:2}}>※反転</span>
+        )}
+      </div>
+
+      {/* 判定インジケーター（コンパクト） */}
+      <div style={{
+        position:"relative", zIndex:1,
+        display:"flex", gap:3, marginBottom:4,
+        justifyContent:"center", flexWrap:"wrap",
+      }}>
+        {[
+          { sub:"100%", color:"#f0c040", desc:"完全反射" },
+          { sub:"60%",  color:"#00ffcc", desc:"反撃成功" },
+          { sub:"MISS", color:"#4a7a9a", desc:"失敗"     },
+        ].map(({ sub, color, desc }) => (
+          <div key={sub} style={{
+            padding:"1px 4px",
+            border:`1px solid ${color}44`,
+            borderRadius:3,
+            background:`rgba(2,6,12,0.65)`,
+            textAlign:"center",
+          }}>
+            <div style={{fontSize:7,color,fontWeight:700}}>{sub}</div>
+            <div style={{fontSize:6,color:"#4a7a9a"}}>{desc}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* タイマー（READY カウント） */}
+      {phase === "ready" && (
+        <div style={{
+          position:"relative", zIndex:1,
+          display:"flex", alignItems:"center", gap:6,
+          marginBottom:4,
+          background:"rgba(2,6,12,0.75)", borderRadius:4, padding:"2px 10px",
+        }}>
+          <span style={{
+            fontSize:14, fontWeight:700,
+            color:"#4a7a9a",
+            fontFamily:"'Share Tech Mono',monospace",
+            letterSpacing:2, minWidth:"1.8em", textAlign:"center",
+          }}>🔒 {readyLeft}</span>
+          <div style={{flex:1, height:4, background:"rgba(255,255,255,0.12)", borderRadius:2, overflow:"hidden", minWidth:60}}>
+            <div style={{
+              height:"100%",
+              width:`${(readyLeft / readyDuration) * 100}%`,
+              background:"#1a4a6a",
+              borderRadius:2,
+              transition:"width 0.9s linear",
+            }}/>
+          </div>
+        </div>
+      )}
+
+      {/* タイマー（選択フェーズ） */}
+      {phase === "select" && (
+        <div style={{
+          position:"relative", zIndex:1,
+          display:"flex", alignItems:"center", gap:6,
+          marginBottom:4,
+          background:"rgba(2,6,12,0.75)", borderRadius:4, padding:"2px 10px",
+        }}>
+          <span style={{
+            fontSize: timeLeft <= 3 ? 18 : 14,
+            fontWeight:700,
+            color: timeLeft <= 3 ? "#ff4466" : timeLeft <= 5 ? "#f97316" : "#00c8ff",
+            fontFamily:"'Share Tech Mono',monospace",
+            letterSpacing:2,
+            animation: timeLeft <= 3 ? "dngr 0.5s infinite" : "none",
+            transition:"color 0.3s, font-size 0.2s",
+            minWidth:"1.8em", textAlign:"center",
+          }}>⏱ {timeLeft}</span>
+          {/* タイマーバー */}
+          <div style={{flex:1, height:4, background:"rgba(255,255,255,0.12)", borderRadius:2, overflow:"hidden", minWidth:60}}>
+            <div style={{
+              height:"100%",
+              width:`${(timeLeft / 10) * 100}%`,
+              background: timeLeft <= 3 ? "#ff4466" : timeLeft <= 5 ? "#f97316" : "#00c8ff",
+              borderRadius:2,
+              transition:"width 0.9s linear, background 0.3s",
+            }}/>
+          </div>
+        </div>
+      )}
+
+      {/* 結果 */}
+      {phase === "result" && (
+        <div style={{position:"relative",zIndex:1,textAlign:"center",marginBottom:4,
+          background:"rgba(2,6,12,0.75)",borderRadius:6,padding:"4px 12px"}}>
+          <div style={{
+            fontSize:13, fontWeight:700, letterSpacing:3,
+            color:resultColor,
+            animation:"comboPop 0.5s cubic-bezier(0.34,1.56,0.64,1)",
+          }}>
+            {resultLabel}
+          </div>
+          {isTimeout && (
+            <div style={{fontSize:7,color:"#ff4466",marginTop:1,letterSpacing:1}}>
+              時間切れ！ カウンター失敗
+            </div>
+          )}
+          {isCritical && (
+            <div style={{fontSize:7,color:"#f0c040",marginTop:1,letterSpacing:1}}>
+              攻撃を完全に返した！ ×1.5
+            </div>
+          )}
+          {isSuccess && !isCritical && (
+            <div style={{fontSize:7,color:"#00ffcc",marginTop:1,letterSpacing:1}}>
+              カウンター成功 ×0.9
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* キャンセルボタン */}
+      {phase === "select" && onCancel && (
+        <button
+          onClick={onCancel}
+          style={{
+            position:"relative", zIndex:1,
+            padding:"2px 10px", background:"rgba(2,6,12,0.7)",
+            border:"1px solid #1a4a6a66", color:"#4a7a9a",
+            fontSize:7, cursor:"pointer", borderRadius:3,
+            fontFamily:"'Share Tech Mono',monospace",
+            letterSpacing:1, transition:"all 0.2s",
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.borderColor = "#4a7a9a";
+            e.currentTarget.style.color = "#c8e8f8";
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = "#1a4a6a66";
+            e.currentTarget.style.color = "#4a7a9a";
+          }}
+        >
+          ← 戻る
+        </button>
+      )}
+    </div>
+  );
+};
+
 // 勝利画面ボタン -- 1回目押下でファンファーレ開始、2回目押下でシーン遷移
 function VictoryButton({ onFanfareStart, onProceed }) {
   const [started, setStarted] = useState(false);
@@ -3003,6 +3765,15 @@ export default function ArcadiaCh2() {
   const [memberCdMap,          setMemberCdMap         ] = useState({}); // ← 追加
   // playerStunActive > 0: 敵スキル（テイクダウン等）によりパーティが行動不能な残りターン数
   const [playerStunActive,     setPlayerStunActive    ] = useState(0);
+
+  // ── サーモグラフィカウンターUI state ──────────────────────────────────────
+  const [thermoCounterPhase,  setThermoCounterPhase ] = useState(null);
+  const [thermoCounterAction, setThermoCounterAction] = useState(null);
+  const [thermoCounterMult,   setThermoCounterMult  ] = useState(null);
+  // 全列サーモ結果集約：{ slotIdx → mult } 全生存敵が選択したらonThermoConfirmを呼ぶ
+  const [thermoResultsMap, setThermoResultsMap] = useState({});
+  // 全列の生存敵数（サーモ起動時にセット）
+  const [thermoTotalSlots, setThermoTotalSlots] = useState(0);
 
   // ── 回避グリッドUIステート（新・自動発動式） ────────────────────────────
   // dodgeGridPhase: null | "select" | "result"
@@ -4147,7 +4918,21 @@ export default function ArcadiaCh2() {
 
     const currentMp = member.id === "eltz" ? mp : (partyMp[member.id] ?? 0);
     if (sk.cost > 0 && currentMp < sk.cost) { showNotif(`${member.name}のMPが足りない！`); return; }
-
+    // ── カウンター → サーモグラフィUI起動（全列表示） ──────────────────────
+    if (skillId === "counter") {
+      const tgtEnemy = multiEnemies ? multiEnemies.find(e => !e.defeated) : null;
+      const nextAct  = tgtEnemy
+        ? tgtEnemy.def.pattern[tgtEnemy.turnIdx % tgtEnemy.def.pattern.length]
+        : "atk";
+      const aliveCount = multiEnemies ? multiEnemies.filter(e => !e.defeated).length : 1;
+      setPendingCommands(prev => ({ ...prev, [member.id]: "counter" }));
+      setThermoCounterAction(nextAct);
+      setThermoCounterMult(null);
+      setThermoResultsMap({});
+      setThermoTotalSlots(aliveCount);
+      setThermoCounterPhase("active");
+      return;
+    }
     // 複数敵バトル（2体以上）かつ攻撃系スキル → ターゲット選択モードへ
     const sk_def_t = SKILL_DEFS[skillId];
     const aliveEnemyCount = multiEnemies ? multiEnemies.filter(e => !e.defeated).length : 0;
@@ -4231,6 +5016,104 @@ export default function ArcadiaCh2() {
       setRhythmPhase("playing");
     }
   }, [pendingTargetSelect, pendingTargets, pendingCommands, multiEnemies, hp, partyHp]);
+ 
+  // ── サーモグラフィカウンター確定コールバック ──────────────────────────────
+  // ── サーモグラフィ：スロット別選択コールバック ───────────────────────────
+  // 各列で選択されたらresultsMapに積む。全列完了をuseEffectで検知してターン進行。
+  const onThermoConfirmSlot = useCallback((mult, _selectedIdx, slotIdx) => {
+    setThermoResultsMap(prev => ({ ...prev, [slotIdx]: mult }));
+  }, []);
+
+  // 全列確定を検知してターン進行
+  useEffect(() => {
+    if (thermoCounterPhase !== "active") return;
+    if (thermoTotalSlots === 0) return;
+    const confirmedCount = Object.keys(thermoResultsMap).length;
+    if (confirmedCount < thermoTotalSlots) return;
+    // 全列完了 → 800ms後にUI閉じ＆ターン進行
+    const timer = setTimeout(() => {
+      const avgMult = Object.values(thermoResultsMap).reduce((s, v) => s + v, 0) / confirmedCount;
+      setThermoCounterPhase(null);
+      setThermoResultsMap({});
+      setThermoCounterMult(avgMult);
+      const resolvedSkill = avgMult > 0 ? "counter" : "wait";
+      const member = PARTY_DEFS[cmdInputIdx];
+      if (!member) return;
+      const newCmds = { ...pendingCommands, [member.id]: resolvedSkill };
+      const newTgts = { ...pendingTargets,  [member.id]: 0 };
+      let nextIdx = cmdInputIdx + 1;
+      while (nextIdx < PARTY_DEFS.length) {
+        const nm = PARTY_DEFS[nextIdx];
+        const nmHp = nm.id === "eltz" ? hp : (partyHp[nm.id] ?? 0);
+        if (nmHp > 0) break;
+        newCmds[nm.id] = "wait";
+        newTgts[nm.id] = 0;
+        nextIdx++;
+      }
+      setPendingTargets(newTgts);
+      if (nextIdx < PARTY_DEFS.length) {
+        setPendingCommands(newCmds);
+        setCmdInputIdx(nextIdx);
+      } else {
+        setPendingCommands({});
+        setPendingTargets({});
+        setCmdInputIdx(0);
+        setInputPhase("execute");
+        setRhythmResults(null);
+        setPendingRhythmExecution({ mode:"multi", cmds:newCmds, targets:newTgts });
+        setRhythmPhase("playing");
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [thermoResultsMap, thermoTotalSlots, thermoCounterPhase,
+      cmdInputIdx, pendingCommands, pendingTargets, hp, partyHp]);
+
+  const onThermoConfirm = useCallback((mult, _selectedIdx) => {
+    setThermoCounterPhase(null);
+    setThermoResultsMap({});
+    setThermoCounterMult(mult);
+    const resolvedSkill = mult > 0 ? "counter" : "wait";
+    const member = PARTY_DEFS[cmdInputIdx];
+    const newCmds = { ...pendingCommands, [member.id]: resolvedSkill };
+    const newTgts = { ...pendingTargets,  [member.id]: 0 };
+    let nextIdx = cmdInputIdx + 1;
+    while (nextIdx < PARTY_DEFS.length) {
+      const nm = PARTY_DEFS[nextIdx];
+      const nmHp = nm.id === "eltz" ? hp : (partyHp[nm.id] ?? 0);
+      if (nmHp > 0) break;
+      newCmds[nm.id] = "wait";
+      newTgts[nm.id] = 0;
+      nextIdx++;
+    }
+    setPendingTargets(newTgts);
+    if (nextIdx < PARTY_DEFS.length) {
+      setPendingCommands(newCmds);
+      setCmdInputIdx(nextIdx);
+    } else {
+      setPendingCommands({});
+      setPendingTargets({});
+      setCmdInputIdx(0);
+      setInputPhase("execute");
+      setRhythmResults(null);
+      setPendingRhythmExecution({ mode:"multi", cmds:newCmds, targets:newTgts });
+      setRhythmPhase("playing");
+    }
+  }, [cmdInputIdx, pendingCommands, pendingTargets, hp, partyHp]);
+
+  const onThermoCancel = useCallback(() => {
+    setThermoCounterPhase(null);
+    setThermoResultsMap({});
+    setThermoTotalSlots(0);
+    setThermoCounterMult(null);
+    const member = PARTY_DEFS[cmdInputIdx];
+    if (member) {
+      setPendingCommands(prev => {
+        const next = { ...prev };
+        delete next[member.id];
+        return next;
+      });
+    }
+  }, [cmdInputIdx]);
 
   // ── 回避グリッド：マス選択確定コールバック ────────────────────────────
   // 新方式：キューから1件ずつ取り出して表示し、全完了後 resumeTurn を呼ぶ
@@ -5005,14 +5888,28 @@ export default function ArcadiaCh2() {
           } else {
             // ── 通常強攻 (atk)：単体回避判定キューへ ──────────────────────────
             if (tCounter) {
-              // カウンターで反撃
+              const _thermoM = thermoCounterMult ?? 1.0;
               const csk = BATTLE_SKILLS.find(s => s.id === "counter");
-              const bd = Math.max(1, Math.round((randInt(csk.dmg[0], csk.dmg[1]) * 1.5 + (tid === "eltz" ? atkBonus : 0)) * comboAtkMult) - (e.def.pdef ?? 0));
+              const baseCtrDmg = Math.round(
+                (randInt(csk.dmg[0], csk.dmg[1]) * 1.5 * _thermoM
+                  + (tid === "eltz" ? atkBonus : 0))
+                * comboAtkMult
+              );
+              const bd = Math.max(1, baseCtrDmg - (e.def.pdef ?? 0));
               const eIdx = curEnemies.findIndex(en => en.slot === slot);
               curEnemies[eIdx].hp = Math.max(0, e.hp - bd);
-              if (curEnemies[eIdx].hp <= 0) { curEnemies[eIdx].defeated = true; pendingDefeatFx.push({ slotIdx: eIdx }); }
+              if (curEnemies[eIdx].hp <= 0) {
+                curEnemies[eIdx].defeated = true;
+                pendingDefeatFx.push({ slotIdx: eIdx });
+              }
               pendingHitFx.push({ slotIdx: eIdx, dmg: bd, type: "normal" });
-              logs.push(`${tMember.icon}${tMember.name} 🔄カウンター成功！ → ${e.def.em}${e.def.name} ${bd}ダメージ（×1.5）！ ${tMember.name}は被弾を免れた！`);
+              const thermoLabel = _thermoM >= 1.0 ? " 🎯 PERFECT(×1.5)"
+                                : _thermoM >= 0.6 ? " ✅ HIT(×0.9)" : "";
+              logs.push(
+                `${tMember.icon}${tMember.name} 🔄カウンター成功！${thermoLabel}`
+                + ` → ${e.def.em}${e.def.name} ${bd}ダメージ！`
+                + ` ${tMember.name}は被弾を免れた！`
+              );
             } else {
               // 通常被弾 → 回避グリッドへ
               const d = Math.max(1, Math.round(randInt(e.def.atk[0], e.def.atk[1]) * totalMult) - getMemberDef(tid));
@@ -5387,6 +6284,7 @@ export default function ArcadiaCh2() {
     fireHitEffect, fireDefeatEffect, playReverseEffect, playLightningEffect,
     setDodgeGridCollision, setDodgeGridSelected, setDodgeGridSuccess,
     setDodgeGridAttackInfo, setDodgeGridTargetLabel, setDodgeQueue, setDodgeGridPhase,
+    thermoCounterMult,
   ]);
 
 
@@ -7245,6 +8143,56 @@ export default function ArcadiaCh2() {
                         <div style={{position:"absolute",bottom:-12,left:"50%",transform:"translateX(-50%)",fontSize:16,animation:"idle 0.8s infinite"}}>👆</div>
                       )}
 
+                      {/* ── サーモカウンターUI（列オーバーレイ：全生存敵に展開） ── */}
+                      {thermoCounterPhase === "active" && !me.defeated
+                        && thermoResultsMap[idx] === undefined && (() => {
+                        const grid = THERMO_GRID_DEF[me.type] ?? DEFAULT_THERMO_GRID;
+                        const eName = meDef.name;
+                        const eIcon = meDef.em;
+                        const imgKey = ENEMY_IMG_MAP[me.type];
+                        const imgUrl = imgKey ? assetUrl(imgKey) : null;
+                        return (
+                          <ThermoCounterUI
+                            key={`thermo-${me.slot}`}
+                            actionId={thermoCounterAction ?? "atk"}
+                            enemyImgUrl={imgUrl}
+                            enemyName={eName}
+                            enemyIcon={eIcon}
+                            cols={grid.cols}
+                            rows={grid.rows}
+                            noiseRange={grid.noiseRange ?? DEFAULT_THERMO_GRID.noiseRange}
+                            noiseInterval={grid.noiseInterval ?? DEFAULT_THERMO_GRID.noiseInterval}
+                            slotIdx={idx}
+                            onConfirm={(mult, selIdx) => onThermoConfirmSlot(mult, selIdx, idx)}
+                            onCancel={onThermoCancel}
+                          />
+                        );
+                      })()}
+                      {/* 選択済みスロット：結果バッジ表示（他スロット待ち中） */}
+                      {thermoCounterPhase === "active" && !me.defeated
+                        && thermoResultsMap[idx] !== undefined && (
+                        <div style={{
+                          position:"absolute", inset:0, zIndex:250,
+                          background:"rgba(2,4,8,0.60)",
+                          display:"flex", flexDirection:"column",
+                          alignItems:"center", justifyContent:"center",
+                          fontFamily:"'Share Tech Mono',monospace",
+                        }}>
+                          <div style={{
+                            fontSize:28,
+                            animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)",
+                          }}>
+                            {thermoResultsMap[idx] >= 1.0 ? "🎯" : thermoResultsMap[idx] >= 0.6 ? "✅" : "❌"}
+                          </div>
+                          <div style={{
+                            fontSize:10, fontWeight:700, letterSpacing:2, marginTop:4,
+                            color: thermoResultsMap[idx] >= 1.0 ? "#f0c040" : thermoResultsMap[idx] >= 0.6 ? "#00ffcc" : "#ff4466",
+                          }}>
+                            {thermoResultsMap[idx] >= 1.0 ? "PERFECT" : thermoResultsMap[idx] >= 0.6 ? "HIT" : "MISS"}
+                          </div>
+                        </div>
+                      )}
+
                       {/* エフェクトはフルスクリーンオーバーレイで描画（overflow:hiddenを回避） */}
                     </div>
                   );
@@ -7373,6 +8321,29 @@ export default function ArcadiaCh2() {
                </div>
 
                {/* エフェクトはフルスクリーンオーバーレイで描画（overflow:hiddenを回避） */}
+
+               {/* ── サーモカウンターUI（単体敵オーバーレイ） ── */}
+               {thermoCounterPhase === "active" && thermoResultsMap[0] === undefined && (() => {
+                 const grid   = THERMO_GRID_DEF[currentEnemyType ?? "seagull"] ?? DEFAULT_THERMO_GRID;
+                 const imgKey = ENEMY_IMG_MAP[currentEnemyType];
+                 const imgUrl = imgKey ? assetUrl(imgKey) : null;
+                 const eName  = ed?.name ?? "";
+                 const eIcon  = ed?.em ?? "⚔";
+                 return (
+                   <ThermoCounterUI
+                     actionId={thermoCounterAction ?? "atk"}
+                     enemyImgUrl={imgUrl}
+                     enemyName={eName}
+                     enemyIcon={eIcon}
+                     cols={grid.cols}
+                     rows={grid.rows}
+                     noiseRange={grid.noiseRange ?? DEFAULT_THERMO_GRID.noiseRange}
+                     noiseInterval={grid.noiseInterval ?? DEFAULT_THERMO_GRID.noiseInterval}
+                     onConfirm={(mult, selIdx) => onThermoConfirmSlot(mult, selIdx, 0)}
+                     onCancel={onThermoCancel}
+                   />
+                 );
+               })()}
              </div>
             </>
           )}
@@ -7410,7 +8381,6 @@ export default function ArcadiaCh2() {
             overflow:"hidden",
             position:"relative",
           }}>
-
             {/* ── 回避グリッドUI（右カラム全体を覆うオーバーレイ） ── */}
             {dodgeGridPhase !== null && (() => {
               const info = dodgeGridAttackInfo;
@@ -7629,10 +8599,37 @@ export default function ArcadiaCh2() {
                 const c = ALL_CHAR_DEFS[k];
                 return c ? { icon: c.icon, name: c.name, charId: c.id } : { icon: "?", name: k, charId: null };
               });
+
+              // ── 無効列の計算 ─────────────────────────────────────────
+              // カウンター・行動不能（wait）・戦闘不能（HP0）の列はグレイアウト
+              const pendingCmds = pendingRhythmExecution?.cmds ?? {};
+              const disabledCols = currentPartyKeys.map((k, i) => {
+                const cmd    = pendingCmds[k] ?? "atk";
+                const isDead    = k === "eltz" ? false : (partyHp[k] ?? 0) <= 0;
+                const isCounter = cmd === "counter";
+                const isWait    = cmd === "wait";
+                return (isDead || isCounter || isWait) ? i : null;
+              }).filter(i => i !== null);
+
+              // 全列無効 → リズムパートをスキップして即ターン実行
+              if (disabledCols.length >= rCols) {
+                const skipResults = currentPartyKeys.map((_, i) => ({
+                  col: i, pct: 0, mult: 0, pierceCounter: false, critical: false, hit: 0, total: 1,
+                }));
+                // 次フレームで処理（レンダリング中setState回避）
+                setTimeout(() => {
+                  setRhythmResults(skipResults);
+                  setRhythmPhase("done");
+                  setBtlLogs(prev => [...prev, `⏩ リズムスキップ（全員カウンター／行動不能）`].slice(-20));
+                }, 0);
+                return null;
+              }
+
               return (
                 <RhythmGame
                   cols={rCols}
                   colLabels={rLabels}
+                  disabledCols={disabledCols}
                   totalNotes={rhythmTotalNotes}
                   bpm={rhythmBpm}
                   noteOptions={(() => {
@@ -7955,12 +8952,7 @@ export default function ArcadiaCh2() {
                         </div>
                           );
                         })()}
-                        {/* キャンセルボタン */}
-                        {cmdInputIdx > 0 && inputPhase === "command" && (
-                          <button onClick={onCancelCommand} style={{width:"100%",padding:"3px",background:"transparent",border:`1px solid ${C.border}44`,color:C.muted,fontSize:8,cursor:"pointer",borderRadius:4,fontFamily:FONT_MONO,letterSpacing:1}}>
-                            ← 前のコマンドに戻る
-                          </button>
-                        )}
+
                       </div>
                     )}
                   </div>
