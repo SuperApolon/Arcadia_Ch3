@@ -2993,7 +2993,6 @@ const ThermoCounterUI = ({
             const isSelected  = selected === idx;
             const isSweet     = phase === "result" && sweetSpot === idx;
             const isExtreme   = idx === extremeIdx;
-            const displayPct  = Math.round((isColdSpot ? 1 - h : h) * 100);
 
             // 行ごとのゾーン区切り線
             const borderTop = row > 0 && getZoneForRow(row - 1, rows) !== zone
@@ -3045,16 +3044,6 @@ const ThermoCounterUI = ({
                   background: THERMO_ZONE_COLOR[zone],
                   pointerEvents:"none", mixBlendMode:"overlay",
                 }}/>
-                {/* 熱値% */}
-                <div style={{
-                  position:"absolute", bottom:1, right:2,
-                  fontSize:FONT_SZ,
-                  color: displayPct > 72 ? "rgba(0,0,0,0.65)" : "rgba(255,255,255,0.65)",
-                  pointerEvents:"none",
-                  fontFamily:"'Share Tech Mono',monospace", lineHeight:1,
-                }}>
-                  {displayPct}
-                </div>
                 {/* 結果アイコン */}
                 {isSelected && (
                   <div style={{
