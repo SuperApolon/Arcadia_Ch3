@@ -352,28 +352,28 @@ const THERMO_GRID_DEF = {
   // noiseRange    : 毎更新で初期値に加減算する乱数の最大幅（0.0〜1.0）
   // noiseInterval : 更新間隔（秒）。小さいほど頻繁に揺れる
   // ── 第一章 ──────────────────────────────────────────────────────────────
-  seagull:         { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 2.5 }, // おとなしい鳥、ゆっくり
-  shamerlot:       { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 2.0 },
-  shamerlot_lv3:   { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
-  shamerlot_lv5:   { cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.5 }, // Lv5は揺れも大きく
+  seagull:         { cols: 3, rows: 3, noiseRange: 0.30, noiseInterval: 2.5 }, // おとなしい鳥、ゆっくり
+  shamerlot:       { cols: 3, rows: 3, noiseRange: 0.30, noiseInterval: 2.0 },
+  shamerlot_lv3:   { cols: 3, rows: 3, noiseRange: 0.30, noiseInterval: 1.8 },
+  shamerlot_lv5:   { cols: 4, rows: 3, noiseRange: 0.30, noiseInterval: 1.5 }, // Lv5は揺れも大きく
   // ── 第二章 通常 ─────────────────────────────────────────────────────────
-  woopy:           { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 2.0 },
-  moocat:          { cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.0 }, // 速い敵＝激しく揺れる
-  mandragora:      { cols: 3, rows: 4, noiseRange: 0.3, noiseInterval: 3.0 }, // 鈍い草型＝ほぼ静止
-  cocatris:        { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
-  cocatris_karma_a:{ cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
-  cocatris_karma_b:{ cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.5 },
-  cocatris_karma_c:{ cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
-  cocatris_ponki_a:{ cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.3 },
-  cocatris_ponki_b:{ cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.5 },
-  cocatris_ponki_c:{ cols: 4, rows: 4, noiseRange: 0.3, noiseInterval: 0.8 }, // 最強コカトリス＝超激しい
+  woopy:           { cols: 3, rows: 3, noiseRange: 0.30, noiseInterval: 2.0 },
+  moocat:          { cols: 4, rows: 3, noiseRange: 0.30, noiseInterval: 1.0 }, // 速い敵＝激しく揺れる
+  mandragora:      { cols: 3, rows: 4, noiseRange: 0.30, noiseInterval: 3.0 }, // 鈍い草型＝ほぼ静止
+  cocatris:        { cols: 3, rows: 3, noiseRange: 0.30, noiseInterval: 1.8 },
+  cocatris_karma_a:{ cols: 4, rows: 3, noiseRange: 0.30, noiseInterval: 1.8 },
+  cocatris_karma_b:{ cols: 4, rows: 4, noiseRange: 0.30, noiseInterval: 1.5 },
+  cocatris_karma_c:{ cols: 3, rows: 4, noiseRange: 0.30, noiseInterval: 1.8 },
+  cocatris_ponki_a:{ cols: 4, rows: 3, noiseRange: 0.30, noiseInterval: 1.3 },
+  cocatris_ponki_b:{ cols: 3, rows: 4, noiseRange: 0.30, noiseInterval: 1.5 },
+  cocatris_ponki_c:{ cols: 4, rows: 4, noiseRange: 0.30, noiseInterval: 0.8 }, // 最強コカトリス＝超激しい
   // ── PVP ────────────────────────────────────────────────────────────────
-  pvp_donatello:   { cols: 5, rows: 5, noiseRange: 0.3, noiseInterval: 1.2 }, // 槍使い＝速くて広い
-  pvp_kevin:       { cols: 4, rows: 4, noiseRange: 0.3, noiseInterval: 2.0 },
-  pvp_chopper:     { cols: 3, rows: 3, noiseRange: 0.3, noiseInterval: 1.8 },
+  pvp_donatello:   { cols: 5, rows: 4, noiseRange: 0.30, noiseInterval: 1.2 }, // 槍使い＝速くて広い
+  pvp_kevin:       { cols: 4, rows: 4, noiseRange: 0.30, noiseInterval: 2.0 },
+  pvp_chopper:     { cols: 3, rows: 3, noiseRange: 0.30, noiseInterval: 1.8 },
   // ── ボス ────────────────────────────────────────────────────────────────
-  olga:            { cols: 5, rows: 7, noiseRange: 0.3, noiseInterval: 0.7 }, // ボス＝最凶の揺れ
-  olga_pet:        { cols: 4, rows: 3, noiseRange: 0.3, noiseInterval: 1.2 },
+  olga:            { cols: 6, rows: 6, noiseRange: 0.30, noiseInterval: 0.8 }, // ボス＝最凶の揺れ
+  olga_pet:        { cols: 4, rows: 3, noiseRange: 0.30, noiseInterval: 1.2 },
 };
 
 // ── ゾーン帯傾向定義 ──────────────────────────────────────────────────────
@@ -2804,10 +2804,8 @@ const ThermoCounterUI = ({
   // phase: "ready" → "select" → "result"
   const [phase,      setPhase     ] = useState("ready");
   const [readyLeft,  setReadyLeft ] = useState(readyDuration);
-  const [timeLeft,   setTimeLeft  ] = useState(10);
   const [scanLines,  setScanLines ] = useState([]);
   const scanRef   = useRef(null);
-  const timerRef  = useRef(null);
   const readyRef  = useRef(null);
 
   const hint = getThermoHint(actionId);
@@ -2864,45 +2862,22 @@ const ThermoCounterUI = ({
     return () => clearInterval(scanRef.current);
   }, []);
 
-  // 10秒制限タイマー
-  useEffect(() => {
-    if (phase !== "select") return;
-    setTimeLeft(10);
-    let rem = 10;
-    timerRef.current = setInterval(() => {
-      rem--;
-      setTimeLeft(rem);
-      if (rem <= 0) {
-        clearInterval(timerRef.current);
-        // タイムアウト → 失敗（mult=0）
-        setSelected(-1);
-        setPhase("result");
-        setTimeout(() => onConfirm(0, -1), 1200);
-      }
-    }, 1000);
-    return () => clearInterval(timerRef.current);
-  }, [phase]); // eslint-disable-line
-
   const handleSelect = (idx) => {
     if (phase !== "select") return;
-    clearInterval(timerRef.current);
     setSelected(idx);
     setPhase("result");
     const mult = getThermoCounterMult(idx, sweetSpot, cols);
     setTimeout(() => onConfirm(mult, idx), 1200);
   };
 
-  const isTimeout   = selected === -1;
-  const mult        = (selected !== null && selected !== -1) ? getThermoCounterMult(selected, sweetSpot, cols) : (isTimeout ? 0 : null);
+  const mult        = selected !== null ? getThermoCounterMult(selected, sweetSpot, cols) : null;
   const isCritical  = mult !== null && mult >= 1.0;
   const isSuccess   = mult !== null && mult >= 0.6;
   const resultLabel = mult === null ? ""
-    : isTimeout   ? "⏱ TIME OUT！"
     : isCritical  ? "🎯 PERFECT COUNTER！"
     : isSuccess   ? "✅ COUNTER HIT"
     : "❌ MISS";
   const resultColor = mult === null ? "#00c8ff"
-    : isTimeout   ? "#ff4466"
     : isCritical  ? "#f0c040"
     : isSuccess   ? "#00ffcc"
     : "#ff4466";
@@ -3121,7 +3096,7 @@ const ThermoCounterUI = ({
             position:"absolute", inset:0, zIndex:10,
             display:"flex", flexDirection:"column",
             alignItems:"center", justifyContent:"center",
-            background:"rgba(2,4,10,0.90)",
+            background:"rgba(2,4,10,0.93)",
             borderRadius:4,
             pointerEvents:"all",
           }}>
@@ -3215,36 +3190,7 @@ const ThermoCounterUI = ({
         </div>
       )}
 
-      {/* タイマー（選択フェーズ） */}
-      {phase === "select" && (
-        <div style={{
-          position:"relative", zIndex:1,
-          display:"flex", alignItems:"center", gap:6,
-          marginBottom:4,
-          background:"rgba(2,6,12,0.75)", borderRadius:4, padding:"2px 10px",
-        }}>
-          <span style={{
-            fontSize: timeLeft <= 3 ? 18 : 14,
-            fontWeight:700,
-            color: timeLeft <= 3 ? "#ff4466" : timeLeft <= 5 ? "#f97316" : "#00c8ff",
-            fontFamily:"'Share Tech Mono',monospace",
-            letterSpacing:2,
-            animation: timeLeft <= 3 ? "dngr 0.5s infinite" : "none",
-            transition:"color 0.3s, font-size 0.2s",
-            minWidth:"1.8em", textAlign:"center",
-          }}>⏱ {timeLeft}</span>
-          {/* タイマーバー */}
-          <div style={{flex:1, height:4, background:"rgba(255,255,255,0.12)", borderRadius:2, overflow:"hidden", minWidth:60}}>
-            <div style={{
-              height:"100%",
-              width:`${(timeLeft / 10) * 100}%`,
-              background: timeLeft <= 3 ? "#ff4466" : timeLeft <= 5 ? "#f97316" : "#00c8ff",
-              borderRadius:2,
-              transition:"width 0.9s linear, background 0.3s",
-            }}/>
-          </div>
-        </div>
-      )}
+
 
       {/* 結果 */}
       {phase === "result" && (
@@ -3257,11 +3203,6 @@ const ThermoCounterUI = ({
           }}>
             {resultLabel}
           </div>
-          {isTimeout && (
-            <div style={{fontSize:7,color:"#ff4466",marginTop:1,letterSpacing:1}}>
-              時間切れ！ カウンター失敗
-            </div>
-          )}
           {isCritical && (
             <div style={{fontSize:7,color:"#f0c040",marginTop:1,letterSpacing:1}}>
               攻撃を完全に返した！ ×1.5
