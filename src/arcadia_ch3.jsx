@@ -2148,6 +2148,707 @@ const LOC_TO_SCENE_IMG = {
 };
 
 // ============================================================
+// @@SECTION:DANMAKU_SHOOTER ── 弾幕シューティング回避ミニゲーム
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ENEMY_TYPES = {
+  dot:     { shape:"circle",   size:7,  color:"#4499ff", hpMax:1, spd:0.5,
+             attackSeq:["single","single","burst"],            shootBase:90 },
+  tri:     { shape:"triangle", size:9,  color:"#44ffaa", hpMax:1, spd:0.7,
+             attackSeq:["burst","burst"],                    shootBase:65 },
+  box:     { shape:"rect",     size:11, color:"#ffcc44", hpMax:1, spd:0.6,
+             attackSeq:["scatter","scatter"],            shootBase:90 },
+  diamond: { shape:"diamond",  size:10, color:"#ff88ff", hpMax:2, spd:0.9,
+             attackSeq:["burst","burst","burst"],              shootBase:45 },
+  star:    { shape:"star",     size:12, color:"#ff4422", hpMax:1, spd:1.1,
+             attackSeq:["burst","scatter","laser_line"],         shootBase:50 },
+  bigbox:  { shape:"rect",     size:15, color:"#ff7700", hpMax:3, spd:0.4,
+             attackSeq:["laser_line","burst","scatter","single"], shootBase:55 },
+  laser_e: { shape:"diamond",  size:10, color:"#ff00ff", hpMax:1, spd:0.8,
+             attackSeq:["laser_line","laser_line"],    shootBase:60 },
+  spinner: { shape:"hexagon",  size:13, color:"#00ffff", hpMax:1, spd:0.7,
+             attackSeq:["single","burst"],        shootBase:65 },
+  cross_e: { shape:"star",     size:16, color:"#ffffff", hpMax:3, spd:0.5,
+             attackSeq:["laser_cross","scatter","burst"],   shootBase:70 },
+  chaos_e: { shape:"hexagon",  size:18, color:"#ff2266", hpMax:3, spd:0.6,
+             attackSeq:["laser_cross_rnd","scatter","burst"], shootBase:75 },
+  radial_e:{ shape:"circle",   size:14, color:"#ffff00", hpMax:2, spd:0.9,
+             attackSeq:["radial","radial","radial","radial"],    shootBase:30 },
+};
+
+const ACTION_ENEMY_SETUP = {
+  atk:         [{ type:"box",     count:5 },{ type:"tri", count:5 }],
+  atk_all:     [{ type:"star",    count:5 },{ type:"diamond", count:5 },{ type:"box", count:5 }],
+  counter:     [{ type:"diamond", count:3 },{ type:"laser_e", count:5 }],
+  unavoidable: [{ type:"chaos_e", count:1 },{ type:"dot", count:5 }],
+  elem_fire:   [{ type:"tri",    count:10 },{ type:"dot", count:15 }],
+  elem_ice:    [{ type:"box", count:10 }],
+  elem_thunder:[{ type:"laser_e", count:7 }],
+  elem_earth:  [{ type:"bigbox",  count:5 },{ type:"tri",     count:3 }],
+  heal:        [{ type:"dot",     count:30 }],
+  enrage:      [{ type:"star",    count:2 },{ type:"chaos_e", count:1 }],
+  StellaFritz: [{ type:"chaos_e", count:1 },{ type:"radial_e", count:5 },{ type:"box",     count:5 }],
+  LightningSlash:[{ type:"chaos_e",count:1 },{ type:"radial_e",count:5 },{ type:"box",     count:5 },{ type:"laser_e",     count:5 }],
+  reverse:     [{ type:"laser_e", count:8 }],
+  takedown:    [{ type:"bigbox",  count:5 }],
+};
+const ACTION_ENEMY_DEFAULT = [{ type:"box", count:2 }];
+
+// レーザー長さ設定（ピクセル）
+const LASER_LEN = 600;          // 回転・交差レーザーの腕の長さ（短くするにはここを変更）
+// 予兆フェーズのフレーム数（この間は細い点滅線のみ、当たり判定なし）
+const LASER_WARN_FRAMES = 45;   // 約1.35秒の予兆時間（FPS_MS=30ms換算）
+
+// 弾幕種定義
+// hitWeight: 被弾時の重みポイント（5weight=100%ダメージ, MAX10weight=200%）
+const BULLET_TYPE_DEFS = {
+  single:          { color:"#ff6688", r:5,  dmg:8,  hitWeight:1, label:"単発",       speed:2.0 },
+  burst:           { color:"#ff9922", r:4,  dmg:5,  hitWeight:1, label:"連射",       speed:4.0 },
+  scatter:         { color:"#ff44aa", r:4,  dmg:6,  hitWeight:1, label:"ばら撒き",   speed:1.2 },
+  laser_line:      { color:"#ff00ff", r:3,  dmg:12, hitWeight:5, label:"直線ﾚｰｻﾞｰ", speed:0, isLineLaser:true,  laserW:10 },
+  laser_rotate:    { color:"#00ffff", r:3,  dmg:14, hitWeight:5, label:"回転ﾚｰｻﾞｰ", speed:0, isRotLaser:true,  laserW:8  },
+  laser_cross:     { color:"#ffff44", r:3,  dmg:12, hitWeight:5, label:"交差ﾚｰｻﾞｰ", speed:0, isCrossLaser:true,laserW:6  },
+  laser_cross_rnd: { color:"#ff8844", r:3,  dmg:10, hitWeight:5, label:"乱交差",     speed:0, isCrossRnd:true,  laserW:5  },
+  radial:          { color:"#44ffff", r:5,  dmg:7,  hitWeight:1, label:"全方位",     speed:0.9 },
+  oneshot:         { color:"#ffffff", r:10, dmg:999,hitWeight:10,label:"一撃死",     speed:0.8, isOneshot:true },
+};
+
+const DanmakuShooter = React.memo(({
+  info, actionLabel, isAll, targetLabel,
+  hp, mhp, remaining, partyCount,
+  phase, success, timeLimit,
+  onComplete, C,
+}) => {
+  const FIRE_INTERVAL = 22;
+  const FPS_MS = 30;
+  const FONT_MONO_C = "'Share Tech Mono',monospace";
+  const ELTZ_IMG_URL = "https://superapolon.github.io/Arcadia_Assets/sprites/eltz.webp";
+  const DURATION = timeLimit || 15;
+
+  // 動的サイズ：親コンテナに合わせてキャンバスサイズを決定
+  const containerRef   = useRef(null);
+  const [gameSize, setGameSize] = useState({ w: 220, h: 340 });
+  const GAME_W = gameSize.w;
+  const GAME_H = gameSize.h;
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const obs = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setGameSize({ w: Math.floor(width), h: Math.floor(height) });
+        }
+      }
+    });
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  const canvasRef      = useRef(null);
+  const stateRef       = useRef(null);
+  const rafRef         = useRef(null);
+  const resolvedRef    = useRef(false);
+  const onCompleteRef  = useRef(onComplete);
+  const inputRef       = useRef({ x: GAME_W/2, y: GAME_H-40, active:false });
+  const shipImgRef     = useRef(null);
+  // 被弾蓄積（このセッション全体）
+  const hitAccRef      = useRef({ count:0, weight:0 });
+
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = ELTZ_IMG_URL;
+    img.onload  = () => { shipImgRef.current = img; };
+    img.onerror = () => { shipImgRef.current = null; };
+  }, []);
+
+  const enemySetup = useMemo(() => {
+    const id = info?.actionId ?? "atk";
+    return ACTION_ENEMY_SETUP[id] ?? ACTION_ENEMY_DEFAULT;
+  }, [info]);
+
+  const handlePM = useCallback((e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = e.clientX ?? e.touches?.[0]?.clientX;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY;
+    if (cx == null) return;
+    const gw = canvasRef.current?.width  || GAME_W;
+    const gh = canvasRef.current?.height || GAME_H;
+    inputRef.current.x = Math.max(8, Math.min(gw-8, (cx-rect.left)/rect.width *gw));
+    inputRef.current.y = Math.max(8, Math.min(gh-8, (cy-rect.top) /rect.height*gh));
+    inputRef.current.active = true;
+  }, []);
+  const handlePU = useCallback(() => { inputRef.current.active = false; }, []);
+
+  useEffect(() => {
+    if (phase !== "select") return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    hitAccRef.current = { count:0, weight:0 };
+    resolvedRef.current = false;
+
+    // キャンバスの実際サイズを使用（動的サイズ対応）
+    const GW = canvas.width;
+    const GH = canvas.height;
+
+    const SHIP_W = isAll ? 48 : 28;
+    const SHIP_H = isAll ? 48 : 28;
+    const SHIP_R = isAll ? 14 : 8;
+
+    const totalCount = enemySetup.reduce((s,g)=>s+g.count,0);
+    const clamped = Math.min(totalCount, 99);
+    const allEnemies = [];
+    let placed = 0;
+    for (const group of enemySetup) {
+      for (let ci=0; ci<group.count && placed<clamped; ci++, placed++) {
+        const td = ENEMY_TYPES[group.type] ?? ENEMY_TYPES["box"];
+        allEnemies.push({
+          x: GW*(placed+1)/(clamped+1), y:32+(placed%3)*20,
+          vx:(placed%2===0?1:-1)*td.spd,
+          vy:0,
+          vyTimer:0, vyTimerMax:40+Math.floor(Math.random()*60),
+          hp:td.hpMax, maxHp:td.hpMax,
+          shootTimer:td.shootBase+placed*18,
+          atkIdx:0, flashT:0, td, rotAngle:0,
+        });
+      }
+    }
+
+    stateRef.current = {
+      shipX:GW/2, shipY:GH-50,
+      bullets:[], lasers:[], playerBullets:[],
+      enemies:allEnemies,
+      timeLeft:DURATION, frame:0, lastShot:0,
+      dead:false, won:false,
+      particles:[],
+      stars:Array.from({length:40},()=>({
+        x:Math.random()*GW, y:Math.random()*GH,
+        spd:0.5+Math.random()*1.5, r:Math.random()<0.3?1.5:1,
+      })),
+      timerF:0,
+    };
+
+    function spawnPart(x,y,color,n){
+      const s=stateRef.current;
+      for(let i=0;i<n;i++){
+        const a=Math.random()*Math.PI*2, spd=1+Math.random()*3;
+        s.particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:20+Math.random()*20,color});
+      }
+    }
+
+    function fireAttack(e){
+      const s=stateRef.current;
+      const atkType=e.td.attackSeq[e.atkIdx%e.td.attackSeq.length];
+      e.atkIdx++;
+      const def=BULLET_TYPE_DEFS[atkType]??BULLET_TYPE_DEFS["single"];
+      const dx=s.shipX-e.x, dy=s.shipY-e.y;
+      const dist=Math.sqrt(dx*dx+dy*dy)||1;
+
+      if(def.isLineLaser){
+        // 予兆フェーズ付き直線レーザー
+        s.lasers.push({type:"line",laserX:s.shipX,life:80,maxLife:80,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
+          warnLife:LASER_WARN_FRAMES,isWarning:true});
+        return;
+      }
+      if(def.isRotLaser){
+        // 予兆フェーズ付き回転レーザー（予兆中は静止）
+        s.lasers.push({type:"rotate",cx:e.x,cy:e.y,angle:0,angV:0.05,life:100,maxLife:100,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
+          warnLife:LASER_WARN_FRAMES,isWarning:true});
+        return;
+      }
+      if(def.isCrossLaser){
+        const angles=[0,Math.PI*0.25,Math.PI*0.5,Math.PI*0.75,Math.PI,Math.PI*1.25,Math.PI*1.5,Math.PI*1.75];
+        s.lasers.push({type:"cross",cx:canvas.width/2,cy:canvas.height/2,angles,angV:0,life:90,maxLife:90,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
+          warnLife:LASER_WARN_FRAMES,isWarning:true});
+        return;
+      }
+      if(def.isCrossRnd){
+        const cnt=5+Math.floor(Math.random()*4);
+        const angles=Array.from({length:cnt},()=>Math.random()*Math.PI*2);
+        s.lasers.push({type:"cross",cx:canvas.width/2,cy:canvas.height/2,angles,angV:0.02*(Math.random()<0.5?1:-1),life:85,maxLife:85,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
+          warnLife:LASER_WARN_FRAMES,isWarning:true});
+        return;
+      }
+      if(atkType==="burst"){
+        for(let b=0;b<3;b++){
+          const sp=(Math.random()-0.5)*0.25;
+          const dy2=b*((dy/dist)*def.speed*0.5*0.6);
+          s.bullets.push({x:e.x,y:e.y+dy2,vx:(dx/dist+sp)*def.speed,vy:(dy/dist+0.1)*def.speed,def,age:0});
+        }
+      } else if(atkType==="scatter"){
+        for(let b=0;b<16;b++){
+          const a=Math.random()*Math.PI*2;
+          const spd=def.speed*(0.6+Math.random()*0.8);
+          s.bullets.push({x:e.x,y:e.y,vx:Math.cos(a)*spd,vy:Math.abs(Math.sin(a))*spd+0.5,def,age:0});
+        }
+      } else if(atkType==="radial"){
+        const shots=12;
+        const baseAngle=(e.atkIdx/shots)*Math.PI*2;
+        for(let b=0;b<shots;b++){
+          const a=baseAngle+(b/shots)*Math.PI*2;
+          const spd=def.speed*(0.8+Math.random()*0.3);
+          s.bullets.push({x:e.x,y:e.y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,def,age:0});
+        }
+      } else {
+        const sp=(Math.random()-0.5)*0.2;
+        s.bullets.push({x:e.x,y:e.y,
+          vx:(dx/dist+sp)*def.speed*(0.9+Math.random()*0.2),
+          vy:(dy/dist+0.15)*def.speed*(0.9+Math.random()*0.2),
+          def,age:0});
+      }
+    }
+
+    function hitLaser(lz,sx,sy,shipR){
+      if(lz.type==="line") return Math.abs(sx-lz.laserX)<(lz.w/2)+shipR-2;
+      if(lz.type==="rotate"){
+        for(let k=0;k<2;k++){
+          const a=lz.angle+k*Math.PI;
+          const ex=Math.cos(a),ey=Math.sin(a);
+          const t=(sx-lz.cx)*ex+(sy-lz.cy)*ey;
+          if(t<0||t>LASER_LEN) continue; // LASER_LEN 外は判定なし
+          const px=lz.cx+t*ex,py=lz.cy+t*ey;
+          if(Math.sqrt((sx-px)**2+(sy-py)**2)<lz.w/2+shipR-3) return true;
+        }
+        return false;
+      }
+      if(lz.type==="cross"){
+        for(const a of lz.angles){
+          const ex=Math.cos(a),ey=Math.sin(a);
+          const t=(sx-lz.cx)*ex+(sy-lz.cy)*ey;
+          if(Math.abs(t)>LASER_LEN) continue; // LASER_LEN 外は判定なし
+          const px=lz.cx+t*ex,py=lz.cy+t*ey;
+          if(Math.sqrt((sx-px)**2+(sy-py)**2)<lz.w/2+shipR-3) return true;
+        }
+        return false;
+      }
+      return false;
+    }
+
+    function finishSession(won){
+      if(resolvedRef.current) return;
+      resolvedRef.current = true;
+      const acc = hitAccRef.current;
+      onCompleteRef.current(won, { count:acc.count, weight:acc.weight });
+    }
+
+    let lastT=performance.now();
+    function tick(now){
+      const elapsed=now-lastT;
+      if(elapsed<FPS_MS){rafRef.current=requestAnimationFrame(tick);return;}
+      lastT=now-(elapsed%FPS_MS);
+      const s=stateRef.current;
+      if(!s||s.dead||s.won) return;
+
+      s.frame++; s.timerF++;
+      if(s.timerF>=33){s.timerF=0;s.timeLeft=Math.max(0,s.timeLeft-1);}
+      if(s.timeLeft<=0){
+        s.won=true; draw(); finishSession(true); return;
+      }
+
+      for(const st of s.stars){st.y+=st.spd;if(st.y>canvas.height){st.y=0;st.x=Math.random()*canvas.width;}}
+
+      if(inputRef.current.active){
+        s.shipX = inputRef.current.x;
+        s.shipY = inputRef.current.y;
+      }
+      s.shipX=Math.max(SHIP_R,Math.min(canvas.width-SHIP_R,s.shipX));
+      s.shipY=Math.max(SHIP_R,Math.min(canvas.height-SHIP_R,s.shipY));
+
+      if(s.frame-s.lastShot>=FIRE_INTERVAL){
+        s.lastShot=s.frame;
+        s.playerBullets.push({x:s.shipX,y:s.shipY-SHIP_R-2});
+      }
+      for(const pb of s.playerBullets) pb.y-=5;
+      s.playerBullets=s.playerBullets.filter(pb=>pb.y>-10);
+
+      for(const e of s.enemies){
+        if(e.hp<=0) continue;
+        // 横移動
+        e.x+=e.vx; if(e.x<16||e.x>canvas.width-16) e.vx*=-1;
+        // 縦移動（シューティングエリア上半分をランダム移動）
+        const yMax = canvas.height * 0.5;
+        const yMin = 16;
+        e.vyTimer--;
+        if(e.vyTimer<=0){
+          e.vyTimer = e.vyTimerMax;
+          e.vyTimerMax = 40+Math.floor(Math.random()*60);
+          const targetY = yMin + Math.random()*(yMax - yMin);
+          const dy = targetY - e.y;
+          const dist = Math.abs(dy)||1;
+          e.vy = (dy/dist)*e.td.spd*0.7;
+        }
+        e.y+=e.vy;
+        if(e.y<yMin){ e.y=yMin; e.vy=Math.abs(e.vy); }
+        if(e.y>yMax){ e.y=yMax; e.vy=-Math.abs(e.vy); }
+        if(e.flashT>0) e.flashT--;
+        e.rotAngle+=0.04;
+        e.shootTimer--;
+        if(e.shootTimer<=0){
+          e.shootTimer=e.td.shootBase+Math.floor(Math.random()*30);
+          fireAttack(e);
+        }
+        for(let bi=s.playerBullets.length-1;bi>=0;bi--){
+          const pb=s.playerBullets[bi];
+          const dx=pb.x-e.x,dy=pb.y-e.y;
+          if(Math.sqrt(dx*dx+dy*dy)<e.td.size+2){
+            s.playerBullets.splice(bi,1); e.hp--; e.flashT=8;
+            spawnPart(e.x,e.y,"#ffaa44",5);
+            if(e.hp<=0) spawnPart(e.x,e.y,e.td.color,12);
+            break;
+          }
+        }
+      }
+
+      for(let i=s.bullets.length-1;i>=0;i--){
+        const b=s.bullets[i]; b.age++;
+        b.x+=b.vx; b.y+=b.vy;
+        if(b.x<-20||b.x>canvas.width+20||b.y<-20||b.y>canvas.height+40){s.bullets.splice(i,1);continue;}
+        const dx=b.x-s.shipX,dy=b.y-s.shipY;
+        if(Math.sqrt(dx*dx+dy*dy)<SHIP_R-2+b.def.r-2){
+          spawnPart(s.shipX,s.shipY,"#ff4466",12);
+          s.bullets.splice(i,1);
+          // 被弾記録
+          const w = b.def.isOneshot ? 10 : (b.def.hitWeight||1);
+          hitAccRef.current.count++;
+          hitAccRef.current.weight = Math.min(10, hitAccRef.current.weight + w);
+          // 一撃死弾はゲーム終了
+          if(b.def.isOneshot){ s.dead=true; draw(); finishSession(false); return; }
+        }
+      }
+
+      // レーザー当たり（毎フレーム即時判定）
+      for(let i=s.lasers.length-1;i>=0;i--){
+        const lz=s.lasers[i];
+        // 予兆フェーズのカウントダウン（isWarning中はlife消費なし・当たり判定なし）
+        if(lz.isWarning){
+          lz.warnLife--;
+          // line レーザーの予兆中はプレイヤー位置を追尾して固定
+          if(lz.type==="line") lz.laserX=s.shipX;
+          if(lz.warnLife<=0){ lz.isWarning=false; } // 予兆終了→本番開始
+          continue; // 予兆中はlife/hitともスキップ
+        }
+        lz.life--;
+        if(lz.type==="rotate") lz.angle+=lz.angV;
+        if(lz.type==="cross")  lz.angles=lz.angles.map(a=>a+lz.angV);
+        if(lz.life<=0){s.lasers.splice(i,1);continue;}
+        if(hitLaser(lz,s.shipX,s.shipY,SHIP_R)){
+          spawnPart(s.shipX,s.shipY,"#ff44ff",6);
+          // 毎フレーム加算すると多すぎるため5フレームに1回ウェイト加算
+          if(s.frame%5===0){
+            const w = lz.hitWeight||5;
+            hitAccRef.current.count++;
+            hitAccRef.current.weight = Math.min(10, hitAccRef.current.weight + w);
+          }
+        }
+      }
+
+      for(let i=s.particles.length-1;i>=0;i--){
+        const p=s.particles[i]; p.x+=p.vx; p.y+=p.vy; p.vx*=0.92; p.vy*=0.92; p.life--;
+        if(p.life<=0) s.particles.splice(i,1);
+      }
+
+      draw();
+      rafRef.current=requestAnimationFrame(tick);
+    }
+
+    function drawShape(td,x,y,rotAngle,alpha){
+      ctx.save(); ctx.globalAlpha=alpha??1;
+      ctx.translate(x,y); ctx.rotate(rotAngle);
+      const sz=td.size;
+      ctx.fillStyle=td.color; ctx.strokeStyle="#ffffff33"; ctx.lineWidth=1;
+      ctx.shadowColor=td.color; ctx.shadowBlur=10;
+      if(td.shape==="circle"){ctx.beginPath();ctx.arc(0,0,sz,0,Math.PI*2);ctx.fill();ctx.stroke();}
+      else if(td.shape==="rect"){ctx.fillRect(-sz,-sz,sz*2,sz*2);ctx.strokeRect(-sz,-sz,sz*2,sz*2);}
+      else if(td.shape==="triangle"){
+        ctx.beginPath();ctx.moveTo(0,-sz);ctx.lineTo(sz*0.87,sz*0.5);ctx.lineTo(-sz*0.87,sz*0.5);
+        ctx.closePath();ctx.fill();ctx.stroke();
+      }else if(td.shape==="diamond"){
+        ctx.beginPath();ctx.moveTo(0,-sz);ctx.lineTo(sz,0);ctx.lineTo(0,sz);ctx.lineTo(-sz,0);
+        ctx.closePath();ctx.fill();ctx.stroke();
+      }else if(td.shape==="star"){
+        ctx.beginPath();
+        for(let i=0;i<10;i++){
+          const r=i%2===0?sz:sz*0.45;
+          const a=i*Math.PI/5-Math.PI/2;
+          if(i===0)ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r);
+          else ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);
+        }
+        ctx.closePath();ctx.fill();ctx.stroke();
+      }else if(td.shape==="hexagon"){
+        ctx.beginPath();
+        for(let i=0;i<6;i++){
+          const a=i*Math.PI/3;
+          if(i===0)ctx.moveTo(Math.cos(a)*sz,Math.sin(a)*sz);
+          else ctx.lineTo(Math.cos(a)*sz,Math.sin(a)*sz);
+        }
+        ctx.closePath();ctx.fill();ctx.stroke();
+      }
+      ctx.shadowBlur=0; ctx.restore();
+    }
+
+    function drawLaser(lz,frame){
+      ctx.save();
+      if(lz.isWarning){
+        // ── 予兆フェーズ描画：細い点滅線 ──
+        const warnPct = lz.warnLife / LASER_WARN_FRAMES; // 1→0
+        // 点滅速度は予兆終了に近づくほど速くなる
+        const blinkRate = 0.3 + (1 - warnPct) * 0.7;
+        const blinkAlpha = 0.3 + 0.5 * Math.abs(Math.sin(frame * blinkRate * 0.4));
+        ctx.globalAlpha = blinkAlpha;
+        ctx.strokeStyle = lz.color;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = lz.color;
+        ctx.shadowBlur = 8;
+        ctx.setLineDash([6, 5]);
+        if(lz.type==="line"){
+          const CH=canvas.height;
+          ctx.beginPath();ctx.moveTo(lz.laserX,0);ctx.lineTo(lz.laserX,CH);ctx.stroke();
+        }else if(lz.type==="rotate"){
+          for(let k=0;k<2;k++){
+            const a=lz.angle+k*Math.PI;
+            ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);
+            ctx.lineTo(lz.cx+Math.cos(a)*LASER_LEN,lz.cy+Math.sin(a)*LASER_LEN);ctx.stroke();
+          }
+        }else if(lz.type==="cross"){
+          for(const a of lz.angles){
+            const ex=Math.cos(a)*LASER_LEN,ey=Math.sin(a)*LASER_LEN;
+            ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx+ex,lz.cy+ey);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx-ex,lz.cy-ey);ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+        // 予兆終了直前（残り10f）: "DANGER!" 文字
+        if(lz.warnLife<=10){
+          ctx.globalAlpha=0.9;
+          ctx.font="bold 9px 'Share Tech Mono',monospace";
+          ctx.fillStyle=lz.color;
+          ctx.textAlign="center";
+          const tx = lz.type==="line" ? lz.laserX : lz.cx;
+          const ty = lz.type==="line" ? canvas.height*0.5 : lz.cy - 18;
+          ctx.fillText("⚠ FIRE!",tx,ty);
+        }
+        ctx.shadowBlur=0; ctx.restore();
+        return;
+      }
+      // ── 本番フェーズ描画 ──
+      const alpha=0.4+0.35*Math.sin(frame*0.25);
+      ctx.globalAlpha=alpha;
+      ctx.strokeStyle=lz.color; ctx.lineWidth=lz.w;
+      ctx.shadowColor=lz.color; ctx.shadowBlur=12;
+      if(lz.type==="line"){
+        const CH=canvas.height;
+        ctx.beginPath();ctx.moveTo(lz.laserX,0);ctx.lineTo(lz.laserX,CH);ctx.stroke();
+        ctx.globalAlpha=0.6+0.3*Math.sin(frame*0.4);
+        ctx.lineWidth=1; ctx.setLineDash([4,4]);
+        ctx.beginPath();ctx.moveTo(lz.laserX,0);ctx.lineTo(lz.laserX,CH);ctx.stroke();
+        ctx.setLineDash([]);
+      }else if(lz.type==="rotate"){
+        for(let k=0;k<2;k++){
+          const a=lz.angle+k*Math.PI;
+          ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);
+          ctx.lineTo(lz.cx+Math.cos(a)*LASER_LEN,lz.cy+Math.sin(a)*LASER_LEN);ctx.stroke();
+        }
+      }else if(lz.type==="cross"){
+        for(const a of lz.angles){
+          const ex=Math.cos(a)*LASER_LEN,ey=Math.sin(a)*LASER_LEN;
+          ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx+ex,lz.cy+ey);ctx.stroke();
+          ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx-ex,lz.cy-ey);ctx.stroke();
+        }
+      }
+      ctx.shadowBlur=0; ctx.restore();
+    }
+
+    function drawShip(s){
+      if(s.dead){
+        // 撃墜時: × 記号
+        ctx.save();ctx.globalAlpha=0.7;
+        ctx.strokeStyle="#ff4466";ctx.lineWidth=3;ctx.shadowColor="#ff4466";ctx.shadowBlur=10;
+        const dr=SHIP_R*0.8;
+        ctx.beginPath();ctx.moveTo(s.shipX-dr,s.shipY-dr);ctx.lineTo(s.shipX+dr,s.shipY+dr);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(s.shipX+dr,s.shipY-dr);ctx.lineTo(s.shipX-dr,s.shipY+dr);ctx.stroke();
+        ctx.shadowBlur=0;ctx.restore();
+        return;
+      }
+      // シールドリング
+      const shieldA=(hitAccRef.current.weight===0)?0.5:0.2;
+      ctx.beginPath();ctx.arc(s.shipX,s.shipY,SHIP_R+4,0,Math.PI*2);
+      ctx.strokeStyle="rgba(0,200,255,"+shieldA+")";ctx.lineWidth=2;ctx.stroke();
+      // ▲ 記号（自機）
+      const sz = SHIP_R;
+      ctx.save();
+      ctx.shadowColor="#00eeff";ctx.shadowBlur=12;
+      ctx.fillStyle="#00eeff";ctx.strokeStyle="#ffffff";ctx.lineWidth=1.5;
+      ctx.beginPath();
+      ctx.moveTo(s.shipX, s.shipY - sz);
+      ctx.lineTo(s.shipX + sz*0.85, s.shipY + sz*0.6);
+      ctx.lineTo(s.shipX - sz*0.85, s.shipY + sz*0.6);
+      ctx.closePath();
+      ctx.fill();ctx.stroke();
+      // 中央コア
+      ctx.shadowColor="#ffffff";ctx.shadowBlur=8;
+      ctx.fillStyle="#ffffff";
+      ctx.beginPath();ctx.arc(s.shipX,s.shipY+sz*0.1,sz*0.2,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;ctx.restore();
+    }
+
+    function draw(){
+      const s=stateRef.current; if(!s) return;
+      const CW=canvas.width, CH=canvas.height;
+      ctx.clearRect(0,0,CW,CH);
+      ctx.fillStyle="#020a14";ctx.fillRect(0,0,CW,CH);
+      for(const st of s.stars){
+        ctx.beginPath();ctx.arc(st.x,st.y,st.r,0,Math.PI*2);
+        ctx.fillStyle="rgba(180,220,255,0.5)";ctx.fill();
+      }
+      ctx.strokeStyle="rgba(0,100,160,0.08)";ctx.lineWidth=1;
+      for(let x=0;x<CW;x+=30){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,CH);ctx.stroke();}
+      for(let y=0;y<CH;y+=30){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(CW,y);ctx.stroke();}
+      for(const lz of s.lasers) drawLaser(lz,s.frame);
+      ctx.shadowColor="#00ffff";ctx.shadowBlur=6;
+      for(const pb of s.playerBullets){
+        ctx.beginPath();ctx.arc(pb.x,pb.y,3,0,Math.PI*2);ctx.fillStyle="#00ffff";ctx.fill();
+      }
+      ctx.shadowBlur=0;
+      for(const e of s.enemies){
+        if(e.hp<=0) continue;
+        drawShape(e.td,e.x,e.y,e.rotAngle,(e.flashT>0&&e.flashT%2===0)?0.3:1.0);
+        const bw=e.td.size*2+4,bh=3;
+        ctx.fillStyle="#1a1a1a";ctx.fillRect(e.x-bw/2,e.y+e.td.size+4,bw,bh);
+        ctx.fillStyle=e.td.color;ctx.fillRect(e.x-bw/2,e.y+e.td.size+4,bw*(e.hp/e.maxHp),bh);
+        ctx.font="7px "+FONT_MONO_C;ctx.textAlign="center";ctx.fillStyle="rgba(255,255,255,0.5)";
+        ctx.fillText(e.td.label,e.x,e.y+e.td.size+12);
+      }
+      for(const b of s.bullets){
+        ctx.beginPath();ctx.arc(b.x,b.y,b.def.r,0,Math.PI*2);
+        ctx.fillStyle=b.def.color;ctx.shadowColor=b.def.color;
+        ctx.shadowBlur=b.def.isOneshot?14:5;ctx.fill();
+        if(b.def.isOneshot){
+          ctx.beginPath();ctx.arc(b.x,b.y,b.def.r+3,0,Math.PI*2);
+          ctx.strokeStyle="#ffffff88";ctx.lineWidth=1.5;ctx.stroke();
+        }
+        ctx.shadowBlur=0;
+      }
+      for(const p of s.particles){
+        const hex=Math.floor(p.life*8).toString(16).padStart(2,"0");
+        ctx.beginPath();ctx.arc(p.x,p.y,2,0,Math.PI*2);ctx.fillStyle=p.color+hex;ctx.fill();
+      }
+      drawShip(s);
+
+      // HPバー
+      const barW=CW-20;
+      ctx.fillStyle="#0a1a28";ctx.fillRect(10,CH-12,barW,6);
+      const wt=hitAccRef.current.weight;
+      const hpColor=wt===0?"#00ff99":wt<3?"#ffcc00":wt<6?"#ff8800":"#ff4466";
+      ctx.fillStyle=hpColor;ctx.fillRect(10,CH-12,barW*Math.max(0,(10-wt)/10),6);
+      ctx.strokeStyle="#1a4a6a";ctx.lineWidth=1;ctx.strokeRect(10,CH-12,barW,6);
+      ctx.font="8px "+FONT_MONO_C;ctx.textAlign="left";ctx.fillStyle="#7ab8d8";
+      ctx.fillText("HIT:"+wt+"/10",12,CH-16);
+
+      // タイマー
+      const tPct=s.timeLeft/DURATION;
+      const tCol=tPct<0.3?"#ff4466":tPct<0.5?"#ffcc00":"#00ccff";
+      ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fillRect(8,8,CW-16,5);
+      ctx.fillStyle=tCol;ctx.fillRect(8,8,(CW-16)*tPct,5);
+      ctx.font="bold 11px "+FONT_MONO_C;ctx.textAlign="right";
+      ctx.fillStyle=tCol;ctx.fillText(s.timeLeft+"s",CW-10,22);
+      ctx.textAlign="left";ctx.fillStyle="rgba(0,200,255,0.4)";
+      ctx.font="9px "+FONT_MONO_C;ctx.fillText("SURVIVE!",10,22);
+
+      if(s.won||s.dead){
+        ctx.fillStyle=s.won?"rgba(0,255,150,0.18)":"rgba(255,40,80,0.22)";
+        ctx.fillRect(0,0,CW,CH);
+        ctx.font="bold 16px "+FONT_MONO_C;ctx.textAlign="center";ctx.textBaseline="middle";
+        ctx.fillStyle=s.won?"#00ff99":"#ff4466";
+        ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=20;
+        ctx.fillText(s.won?"SURVIVED!":"SHOT DOWN",CW/2,CH/2);
+        ctx.shadowBlur=0;
+      }
+    }
+
+    rafRef.current=requestAnimationFrame(tick);
+    return()=>{if(rafRef.current) cancelAnimationFrame(rafRef.current);};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[phase, gameSize]);
+
+  const isResult=phase==="result";
+  const usedAtks=useMemo(()=>{
+    const set=new Set();
+    for(const g of enemySetup){
+      const td=ENEMY_TYPES[g.type]??ENEMY_TYPES["box"];
+      td.attackSeq.forEach(a=>set.add(a));
+    }
+    return [...set];
+  },[enemySetup]);
+  const ATKLABELS={single:"単発",burst:"連射",scatter:"ばら撒き",laser_line:"直線ﾚｰｻﾞｰ",laser_rotate:"回転ﾚｰｻﾞｰ",laser_cross:"交差ﾚｰｻﾞｰ",laser_cross_rnd:"乱交差",radial:"全方位",oneshot:"一撃死"};
+  const ATKCOLORS={single:"#ff6688",burst:"#ff9922",scatter:"#ff44aa",laser_line:"#ff00ff",laser_rotate:"#00ffff",laser_cross:"#ffff44",laser_cross_rnd:"#ff8844",radial:"#44ffff",oneshot:"#ffffff"};
+
+  return (
+    <div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(2,10,20,0.97)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"stretch",justifyContent:"flex-start",animation:"fadeIn 0.15s ease",borderRight:"2px solid "+C.accent+"44",overflow:"hidden"}}>
+      {/* ── ヘッダー情報（コンパクト） ── */}
+      <div style={{flexShrink:0,padding:"5px 8px 3px",borderBottom:"1px solid "+C.accent+"22",display:"flex",flexDirection:"column",gap:1}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:8,color:C.muted,fontFamily:FONT_MONO_C,letterSpacing:3}}>
+            DODGE ─ DANMAKU SHOOTER{"  "}
+            <span style={{color:C.gold}}>{DURATION}s</span>
+            {remaining>1&&React.createElement("span",{style:{color:C.gold,marginLeft:6}},"["+remaining+"件]")}
+          </div>
+          {!isResult&&usedAtks.length>0&&(
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
+              {usedAtks.map(ak=>(
+                <div key={ak} style={{display:"flex",alignItems:"center",gap:2,fontSize:7,fontFamily:FONT_MONO_C,color:"#7ab8d8"}}>
+                  <div style={{width:5,height:5,borderRadius:"50%",background:ATKCOLORS[ak]||"#888"}}/>
+                  {ATKLABELS[ak]||ak}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{fontSize:10,fontFamily:FONT_MONO_C,letterSpacing:1}}>
+          <span style={{color:"#ff4466",animation:isResult?"none":"dngr 0.7s infinite",fontSize:11}}>
+            {info?.enemyIcon??"⚔"}{"\u00a0"}{info?.enemyName??"敵"}
+          </span>
+          <span style={{color:C.muted,margin:"0 4px"}}>の</span>
+          <span style={{color:C.gold}}>{actionLabel.icon}{"\u00a0"}{actionLabel.text}</span>
+          {(isAll||targetLabel)&&(
+            <span style={{color:C.accent,marginLeft:6,fontSize:9}}>
+              {isAll?"🌊 全員対象":targetLabel?"→ "+targetLabel.icon+" "+targetLabel.name:""}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ── キャンバスエリア（残り全高さ） ── */}
+      <div ref={containerRef} style={{flex:1,position:"relative",minHeight:0}}>
+        <canvas ref={canvasRef} width={GAME_W} height={GAME_H}
+          style={{display:"block",width:"100%",height:"100%",touchAction:"none",cursor:"crosshair"}}
+          onMouseMove={!isResult?handlePM:undefined}
+          onTouchMove={!isResult?(e)=>{e.preventDefault();handlePM(e);}:undefined}
+          onTouchEnd={handlePU} onMouseLeave={handlePU}
+        />
+        {!isResult&&(
+          <div style={{position:"absolute",bottom:24,left:"50%",transform:"translateX(-50%)",fontSize:9,color:"rgba(0,200,255,0.35)",fontFamily:FONT_MONO_C,letterSpacing:1,pointerEvents:"none",textAlign:"center"}}>
+            タップ/ドラッグで操作
+          </div>
+        )}
+        {isResult&&(
+          <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",textAlign:"center",pointerEvents:"none"}}>
+            <div style={{fontSize:18,fontFamily:FONT_MONO_C,letterSpacing:3,color:success?C.accent2:C.red,fontWeight:700,animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)",textShadow:`0 0 20px ${success?C.accent2:C.red}`}}>
+              {success?"✅ NO DAMAGE!":"⚠ DAMAGE x"+Math.min(2.0,(hitAccRef.current.weight/5)).toFixed(1)}
+            </div>
+            <div style={{fontSize:10,color:C.muted,fontFamily:FONT_MONO_C,marginTop:6}}>
+              {success?"被弾なし ─ ダメージ0":"被弾weight "+hitAccRef.current.weight+"/10 → "+Math.min(200,Math.round(hitAccRef.current.weight/5*100))+"% ダメージ"}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 // @@SECTION:HEAL_MINIGAME ── ヒールミニゲームコンポーネント
 // ============================================================
 // heal コマンド選択時に rhythmPhase="playing" の代わりに起動
@@ -2267,29 +2968,50 @@ function HealMinigame({ healActors, onComplete }) {
   React.useEffect(()=>{
     const el=areaEl.current; if(!el)return;
     // ── タッチ操作（モバイル・iPad） ────────────────────────────────────────
-    // 長押し: HOLD_DELAY後にインターバルで連打カウント
-    // 長押し中スワイプ: スワイプカウント + 同時にTAPも加算
+    // 1本指:
+    //   タップ = TAP加算
+    //   長押し = HOLD_DELAY後に連打インターバル開始
+    //   長押し中スワイプ = スワイプ加算 + TAP同時加算
+    // 2本指:
+    //   タップ・長押し = 連打無効（何もしない）
+    //   スワイプ = スワイプ数のみ加算（TAP加算なし）
     const HOLD_DELAY=180;
     const HOLD_INTERVAL=80;
     let touchHoldTimer=null, touchHoldInterval=null, touchHoldFired=false;
     let lastTapX=0, lastTapY=0;
+    // 2本指スワイプ用: 2本目の指のID・開始X
+    let touch2Id=null, touch2X=0, swAcc2=0;
     const clearTouchHold=()=>{clearTimeout(touchHoldTimer);clearInterval(touchHoldInterval);touchHoldTimer=null;touchHoldInterval=null;touchHoldFired=false;};
     const ts=(e)=>{
       e.preventDefault();
       if(phRef.current!=="playing")return;
+      const activeTouches=e.touches.length; // touchstart後の現在指本数
       for(const t of e.changedTouches){
         if(touchId.current===null){
+          // 1本目の指を登録
           touchId.current=t.identifier;
           touchX.current=t.clientX;
           lastTapX=t.clientX; lastTapY=t.clientY;
           clearTouchHold();
-          touchHoldTimer=setTimeout(()=>{
-            touchHoldFired=true;
-            onTap(lastTapX,lastTapY);
-            touchHoldInterval=setInterval(()=>onTap(lastTapX,lastTapY),HOLD_INTERVAL);
-          },HOLD_DELAY);
+          // 2本指モードでなければ長押し連打を設定
+          if(activeTouches<2){
+            touchHoldTimer=setTimeout(()=>{
+              touchHoldFired=true;
+              onTap(lastTapX,lastTapY);
+              touchHoldInterval=setInterval(()=>onTap(lastTapX,lastTapY),HOLD_INTERVAL);
+            },HOLD_DELAY);
+          }
+        } else if(touch2Id===null && t.identifier!==touchId.current){
+          // 2本目の指を登録 → 長押し連打をキャンセル
+          touch2Id=t.identifier;
+          touch2X=t.clientX;
+          swAcc2=0;
+          clearTouchHold(); // 長押し連打を即キャンセル
         }
-        onTap(t.clientX,t.clientY);
+        // 1本指時のみ即時TAP加算（2本目が既にある場合は加算しない）
+        if(e.touches.length===1){
+          onTap(t.clientX,t.clientY);
+        }
       }
     };
     const tm=(e)=>{
@@ -2300,8 +3022,20 @@ function HealMinigame({ healActors, onComplete }) {
           touchX.current=t.clientX;
           lastTapX=t.clientX; lastTapY=t.clientY;
           if(Math.abs(dx)>1){
+            // 2本指スワイプ中は1本目の指でもTAP加算しない（スワイプのみ）
+            if(touch2Id===null){
+              // 1本指スワイプ: スワイプ + 長押し中なら TAP も加算
+              onSwipe(dx,t.clientX,t.clientY);
+              if(touchHoldFired) onTap(t.clientX,t.clientY);
+            }
+            // 2本指モード時は1本目の指移動は無視（2本目で処理）
+          }
+        } else if(t.identifier===touch2Id){
+          // 2本目の指のスワイプ → スワイプのみ加算
+          const dx=t.clientX-touch2X;
+          touch2X=t.clientX;
+          if(Math.abs(dx)>1){
             onSwipe(dx,t.clientX,t.clientY);
-            if(touchHoldFired) onTap(t.clientX,t.clientY);
           }
         }
       }
@@ -2311,6 +3045,9 @@ function HealMinigame({ healActors, onComplete }) {
         if(t.identifier===touchId.current){
           touchId.current=null;swAcc.current=0;
           clearTouchHold();
+        }
+        if(t.identifier===touch2Id){
+          touch2Id=null;swAcc2=0;
         }
       }
     };
@@ -2347,7 +3084,7 @@ function HealMinigame({ healActors, onComplete }) {
     el.addEventListener('mouseleave',mleave);
     el.addEventListener('contextmenu',ctx);
     return()=>{
-      clearTouchHold();clearLeft();clearRight();
+      clearTouchHold();clearLeft();clearRight();touch2Id=null;swAcc2=0;
       el.removeEventListener('touchstart',ts);el.removeEventListener('touchmove',tm);
       el.removeEventListener('touchend',te);el.removeEventListener('touchcancel',te);
       el.removeEventListener('mousedown',md);el.removeEventListener('mouseup',mu);
@@ -4044,8 +4781,12 @@ export default function ArcadiaCh2() {
   const resumeTurnRef = useRef(null);
   // dodgeTimerRef: 制限時間タイマーID
   const dodgeTimerRef = useRef(null);
-  // dodgeTimeLeft: 残り秒数表示用 (5→0)
-  const [dodgeTimeLeft, setDodgeTimeLeft] = useState(5);
+  // dodgeTimeLimitRef: 今回の回避セッション制限時間（難易度から算出）
+  const dodgeTimeLimitRef = useRef(15);
+  // dodgeHitCountRef: 被弾カウント（シューティング中に蓄積）
+  const dodgeHitCountRef = useRef({ count: 0, weight: 0 });
+  // dodgeTimeLeft: 残り秒数表示用
+  const [dodgeTimeLeft, setDodgeTimeLeft] = useState(15);
 
    // ── プレイング分析ステート ──────────────────────────────────────────────
    const [battleAnalytics, setBattleAnalytics] = useState([]);
@@ -5537,8 +6278,8 @@ export default function ArcadiaCh2() {
     };
 
     if (dodgeGridPhase === "select") {
-      setDodgeTimeLeft(5);
-      let remaining = 5;
+      setDodgeTimeLeft(dodgeTimeLimitRef.current || 15);
+      let remaining = dodgeTimeLimitRef.current || 15;
       dodgeTimerRef.current = setInterval(() => {
         remaining -= 1;
         setDodgeTimeLeft(remaining);
@@ -5559,56 +6300,59 @@ export default function ArcadiaCh2() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dodgeGridPhase]);
 
-  const onConfirmDodgeGrid = useCallback((cellIdx) => {
-    const isHit = dodgeGridCollision.includes(cellIdx);
-    const success = !isHit;
-    setDodgeGridSelected(cellIdx);
-    setDodgeGridSuccess(success);
+  // ── 弾幕シューティング結果受け取り ──────────────────────────────────────
+  // survived: 生存true/撃墜false
+  // hitResult: { count:number, weight:number } 被弾カウントと重み合計
+  //   weight計算: normal=1, strong=3, laser=5 / ヒットごと
+  //   5weight=100%ダメージ, MAX 10weight=200%ダメージ
+  const onDanmakuComplete = useCallback((survived, hitResult) => {
+    // 被弾倍率計算: weight/5 を dmgMult (0.0〜2.0)
+    const rawMult = (hitResult?.weight ?? 0) / 5;
+    const dmgMult = Math.min(2.0, rawMult);
+    const noDmg   = dmgMult === 0;
+
+    // 結果フェーズ表示
+    setDodgeGridSuccess(noDmg);
     setDodgeGridPhase("result");
 
     setTimeout(() => {
-      // 現在の判定対象 memberId を取得（キューの先頭）
       setDodgeQueue(prev => {
-        const [current, ...rest] = prev;
-        if (!current) return prev;
-
-        // 結果を記録
-        if (current.memberId === "all") {
-          // 全体攻撃：全員に同じ結果を記録
-          current.allTargets.forEach(id => {
-            dodgeResultMapRef.current[`${current.attackKey}_${id}`] = success;
-          });
-        } else {
-          dodgeResultMapRef.current[`${current.attackKey}_${current.memberId}`] = success;
-        }
-
-        if (rest.length > 0) {
-          // 次のキューを表示
-          const next = rest[0];
-          setDodgeGridCollision(next.collision);
-          setDodgeGridSelected(null);
-          setDodgeGridSuccess(false);
-          setDodgeGridAttackInfo(next.attackInfo);
-          setDodgeGridTargetLabel(next.targetLabel);
-          setDodgeGridPhase("select");
-          return rest;
-        } else {
-          // 全判定完了 → ターン再開
-          setDodgeGridPhase(null);
-          setDodgeGridSelected(null);
-          setDodgeGridCollision([]);
-          setDodgeGridAttackInfo(null);
-          setDodgeGridTargetLabel(null);
-          if (resumeTurnRef.current) {
-            const resume = resumeTurnRef.current;
-            resumeTurnRef.current = null;
-            setTimeout(resume, 50);
+        // キュー全件に対して applyDamage を実行するため resultMap を構築
+        // success=true(回避) は noDmg のときだけ。被弾があれば全員 false 扱いだが
+        // applyDamage 側の dmgMult で実ダメージを調整する
+        // dodgeResultMapRef に { attackKey_memberId → { dodged, dmgMult } } を記録
+        for (const entry of prev) {
+          const dodged = noDmg;
+          if (entry.memberId === "all") {
+            (entry.allTargets ?? []).forEach(id => {
+              dodgeResultMapRef.current[entry.attackKey + "_" + id] = dodged;
+            });
+          } else {
+            dodgeResultMapRef.current[entry.attackKey + "_" + entry.memberId] = dodged;
           }
-          return [];
         }
+        // dmgMult を ref に保存しておく（applyDamage側で参照）
+        dodgeResultMapRef.current["__dmgMult__"] = dmgMult;
+
+        setDodgeGridPhase(null);
+        setDodgeGridCollision([]);
+        setDodgeGridAttackInfo(null);
+        setDodgeGridTargetLabel(null);
+        if (resumeTurnRef.current) {
+          const resume = resumeTurnRef.current;
+          resumeTurnRef.current = null;
+          setTimeout(resume, 50);
+        }
+        return [];
       });
-    }, 1100);
-  }, [dodgeGridCollision]);
+    }, 1200);
+  }, []);
+
+  // 後方互換：旧グリッドUIから呼ばれる場合のshim（シューティングでは使わない）
+  const onConfirmDodgeGrid = useCallback((cellIdx) => {
+    const survived = cellIdx === -1 || !dodgeGridCollision.includes(cellIdx);
+    onDanmakuComplete(survived, { count: survived ? 0 : 1, weight: survived ? 0 : 1 });
+  }, [dodgeGridCollision, onDanmakuComplete]);
   // 5フェーズ構成：プリフェイズ → メインフェイズ → エンドフェイズ → コンボジャッジ → アップデート
   const executeMultiTurn = useCallback((cmds, targets, rhythmResultsArg, eltzFromSkillMenu = false) => {
     const enemies = multiEnemies;
@@ -6578,9 +7322,48 @@ export default function ArcadiaCh2() {
     //   なければそのまま finalizeTurn を実行
     // ══════════════════════════════════════════════════════════════════
     const finalizeTurn = (resultMap) => {
+      // ── 被弾倍率を取得 ──────────────────────────────────────────────
+      // __dmgMult__ は onDanmakuComplete でセットされる (0.0〜2.0)
+      // 0=ノーダメ(全回避), 1.0=100%(5ヒット相当), 2.0=200%(10ヒット)
+      const dmgMult = resultMap["__dmgMult__"] ?? 0;
+
       // 回避結果を元に各攻撃のダメージ適用クロージャを実行
       for (const entry of pendingDodgeQueue) {
-        entry.applyDamage(resultMap);
+        if (dmgMult === 0) {
+          // 全回避：全員回避成功フラグをセット（dodged=trueになる）
+          entry.applyDamage(resultMap);
+        } else {
+          // 被弾あり：一時的に結果を"hit"にして applyDamage を呼び、
+          // ダメージに dmgMult を適用するため resultMap を上書きしてから呼ぶ
+          // dodged=false にセット
+          const hitMap = { ...resultMap };
+          if (entry.memberId === "all") {
+            (entry.allTargets ?? []).forEach(id => {
+              hitMap[entry.attackKey + "_" + id] = false;
+            });
+          } else {
+            hitMap[entry.attackKey + "_" + entry.memberId] = false;
+          }
+          // dmgMultを反映するためcurHp/curPartyHpへの影響をスケール
+          // applyDamageの直後にスケール補正する（applyDamageが直接curHp等を変更するため
+          // 一旦スナップショットを取り、差分にdmgMultを掛けて再適用）
+          const hpBefore    = curHp;
+          const partyBefore = { ...curPartyHp };
+          entry.applyDamage(hitMap);
+          // 差分にdmgMultを適用（差分をdmgMult倍にリスケール）
+          const rawEltzDmg = hpBefore - curHp;
+          if (rawEltzDmg > 0) {
+            const scaled = Math.max(1, Math.round(rawEltzDmg * dmgMult));
+            curHp = Math.max(0, hpBefore - scaled);
+          }
+          for (const k of Object.keys(partyBefore)) {
+            const rawDmg = (partyBefore[k] ?? 0) - (curPartyHp[k] ?? 0);
+            if (rawDmg > 0) {
+              const scaled = Math.max(1, Math.round(rawDmg * dmgMult));
+              curPartyHp[k] = Math.max(0, (partyBefore[k] ?? 0) - scaled);
+            }
+          }
+        }
       }
 
       // ══════════════════════════════════════════════════════════════════
@@ -6769,13 +7552,61 @@ export default function ArcadiaCh2() {
     // キューがあればUIを起動、なければ即実行
     if (pendingDodgeQueue.length > 0) {
       dodgeResultMapRef.current = {};
+      dodgeHitCountRef.current = { count: 0, weight: 0 };
+
+      // ── 難易度スコアから制限時間を算出 ──────────────────────────
+      // スコア基準:
+      //   全体攻撃(isAll)があれば +15
+      //   キュー件数 1件ごとに +3
+      //   actionId に unavoidable/atk_all/LightningSlash/StellaFritz があれば +10
+      //   actionId に elem_*/laser*/radial 系があれば +5
+      const HARD_ACTIONS = ["unavoidable","atk_all","LightningSlash","StellaFritz","reverse","takedown"];
+      const MID_ACTIONS  = ["elem_fire","elem_ice","elem_thunder","elem_earth","enrage","counter"];
+      let diffScore = 0;
+      for (const q of pendingDodgeQueue) {
+        if (q.attackInfo?.isAll) diffScore += 15;
+        diffScore += 3;
+        const aid = q.attackInfo?.actionId ?? "";
+        if (HARD_ACTIONS.includes(aid)) diffScore += 10;
+        else if (MID_ACTIONS.includes(aid)) diffScore += 5;
+      }
+      // スコア 0〜5:10秒, 6〜15:15秒, 16〜25:20秒, 26〜35:25秒, 36〜:30秒
+      const timeLimit = diffScore <= 5  ? 18
+                      : diffScore <= 15 ? 24
+                      : diffScore <= 25 ? 27
+                      : diffScore <= 35 ? 30
+                      : 30;
+      dodgeTimeLimitRef.current = timeLimit;
+
       resumeTurnRef.current = () => finalizeTurn(dodgeResultMapRef.current);
-      const first = pendingDodgeQueue[0];
-      setDodgeGridCollision(first.collision);
+      // キューを1件にまとめて代表的なattackInfoを表示（全攻撃を1回で処理）
+      const merged = pendingDodgeQueue[0];
+      setDodgeGridCollision(merged.collision);
       setDodgeGridSelected(null);
       setDodgeGridSuccess(false);
-      setDodgeGridAttackInfo(first.attackInfo);
-      setDodgeGridTargetLabel(first.targetLabel);
+      // isAllフラグはいずれかにあればtrue
+      const hasAll = pendingDodgeQueue.some(q => q.attackInfo?.isAll);
+      // 複数キューが混在する場合、ACTION_ENEMY_SETUP に定義された最も重い actionId を代表に選ぶ
+      // （先頭が常に代表だと弾パターン・敵種類の表示がズレるため）
+      const ACTION_PRIORITY_ORDER = [
+        "LightningSlash","StellaFritz","unavoidable","elem_thunder","elem_fire","elem_ice","elem_earth",
+        "atk_all","counter","enrage","reverse","takedown","heal","atk",
+      ];
+      const representativeQ = pendingDodgeQueue.reduce((best, q) => {
+        const aid = q.attackInfo?.actionId ?? "atk";
+        const baid = best.attackInfo?.actionId ?? "atk";
+        const aIdx = ACTION_PRIORITY_ORDER.indexOf(aid);
+        const bIdx = ACTION_PRIORITY_ORDER.indexOf(baid);
+        // リストにない actionId（カスタムスキル）は最高優先度扱い
+        const aScore = aIdx === -1 ? -1 : aIdx;
+        const bScore = bIdx === -1 ? -1 : bIdx;
+        return aScore < bScore ? q : best;
+      }, pendingDodgeQueue[0]);
+      const mergedInfo = { ...representativeQ.attackInfo, isAll: hasAll,
+        queueCount: pendingDodgeQueue.length };
+      setDodgeGridAttackInfo(mergedInfo);
+      const hasAllTarget = hasAll;
+      setDodgeGridTargetLabel(hasAllTarget ? null : representativeQ.targetLabel);
       setDodgeQueue(pendingDodgeQueue);
       setDodgeGridPhase("select");
     } else {
@@ -6920,6 +7751,67 @@ export default function ArcadiaCh2() {
     setPendingRhythmExecution(null);
     setPendingExecution({ mode:"multi", cmds:stunCmds, targets:stunTgts, rhythmResultsSnapshot: null });
   }, [playerStunActive, inputPhase, victory, defeat, multiEnemies]);
+  // @@SECTION:BATTLE_SKIP_KEY ───────────────────────────────────────────────────
+  // + キー：1ターン丸ごとスキップ（プレイヤー・敵ともに行動なし）
+  // ・全生存敵の turnIdx を +1
+  // ・全メンバーのスキルCDを1デクリメント
+  // ・プレイヤー＆パーティ全員に MP+5
+  // ・プレイヤースタンカウンターをデクリメント
+  // ・ターンカウンター +1
+  // ・コマンドフェーズ（inputPhase === "command"）のときのみ発動
+  React.useEffect(() => {
+    const onKeyDown = (e) => {
+      // "+" (テンキー) または "=" (Shift不要の+キー) に対応
+      if (e.key !== "+" && e.key !== "=") return;
+      if (phase !== "battle") return;
+      if (victory || defeat) return;
+      if (inputPhase !== "command") return;
+
+      // ── 全生存敵の turnIdx を +1 ──────────────────────────────────────
+      setMultiEnemies(prev => {
+        if (!prev) return prev;
+        return prev.map(e =>
+          e.defeated ? e : { ...e, turnIdx: (e.turnIdx + 1) % e.def.pattern.length }
+        );
+      });
+
+      // ── CDを全メンバー×全スキルで1デクリメント ────────────────────────
+      setMemberCdMap(prev => {
+        const next = {};
+        for (const skillId of Object.keys(prev)) {
+          next[skillId] = {};
+          for (const memberId of Object.keys(prev[skillId])) {
+            const v = (prev[skillId][memberId] ?? 0) - 1;
+            if (v > 0) next[skillId][memberId] = v;
+          }
+          if (Object.keys(next[skillId]).length === 0) delete next[skillId];
+        }
+        return next;
+      });
+
+      // ── MP+5（プレイヤー・パーティ全員） ──────────────────────────────
+      setMp(prev => Math.min(prev + 5, mmp));
+      setPartyMp(prev => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          next[k] = Math.min((next[k] ?? 0) + 5, partyMmp[k] ?? 0);
+        }
+        return next;
+      });
+
+      // ── プレイヤースタンをデクリメント ───────────────────────────────
+      setPlayerStunActive(prev => Math.max(0, prev - 1));
+
+      // ── ターンカウンター +1 ───────────────────────────────────────────
+      setTurn(t => t + 1);
+
+      // ── ログ ─────────────────────────────────────────────────────────
+      setBtlLogs(prev => [...prev, "⏭ ターンスキップ（MP+5）"].slice(-20));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [phase, victory, defeat, inputPhase, mmp, partyMmp]);
+
   // @@SECTION:LOGIC_BATTLE_CMD ──────────────────────────────────────────────────
   // onCancelCommand（コマンドキャンセル）・exitBattle（バトル終了・勝敗処理）
   // コマンドキャンセル（最後に選んだメンバーの選択を1つ戻す）
@@ -8967,6 +9859,32 @@ export default function ArcadiaCh2() {
             />
           )}
 
+          {/* ── 弾幕シューティング回避UI（左カラム全面オーバーレイ） ── */}
+          {dodgeGridPhase !== null && (() => {
+            const info = dodgeGridAttackInfo;
+            const actionLabel = info ? getEnemyActionLabel(info.actionId) : { icon:"⚔", text:"攻撃" };
+            const remaining = dodgeQueue.length;
+            const queueCount = info?.queueCount ?? remaining;
+            return (
+              <DanmakuShooter
+                key={(dodgeGridAttackInfo?.enemyName ?? "") + "_" + (dodgeGridAttackInfo?.actionId ?? "atk") + "_" + queueCount}
+                info={info}
+                actionLabel={actionLabel}
+                isAll={info?.isAll ?? false}
+                targetLabel={dodgeGridTargetLabel}
+                hp={hp}
+                mhp={mhp}
+                remaining={remaining}
+                partyCount={currentPartyKeys.length}
+                phase={dodgeGridPhase}
+                success={dodgeGridSuccess}
+                timeLimit={dodgeTimeLimitRef.current || 15}
+                onComplete={onDanmakuComplete}
+                C={C}
+              />
+            );
+          })()}
+
           </div>
           <div style={{
             flex: isPortrait ? "1 1 0" : "0 0 38%",
@@ -8977,216 +9895,7 @@ export default function ArcadiaCh2() {
             overflow:"hidden",
             position:"relative",
           }}>
-            {/* ── 回避グリッドUI（右カラム全体を覆うオーバーレイ） ── */}
-            {dodgeGridPhase !== null && (() => {
-              const info = dodgeGridAttackInfo;
-              const actionLabel = info ? getEnemyActionLabel(info.actionId) : { icon:"⚔", text:"攻撃" };
-              const isAllCollision = dodgeGridCollision.length >= 9;
-              const noCollision   = dodgeGridCollision.length === 0;
-              const remaining = dodgeQueue.length;
-
-              return (
-                <div style={{
-                  position:"absolute",
-                  inset:0,
-                  zIndex:200,
-                  background:"rgba(5,13,20,0.97)",
-                  backdropFilter:"blur(10px)",
-                  display:"flex", flexDirection:"column",
-                  alignItems:"center", justifyContent:"center",
-                  padding:"16px 12px",
-                  animation:"fadeIn 0.15s ease",
-                  borderTop: `2px solid ${C.accent}44`,
-                  overflowY:"auto",
-                }}>
-                  {/* ヘッダー：敵情報 */}
-                  <div style={{marginBottom:10, textAlign:"center"}}>
-                    <div style={{fontSize:9, color:C.muted, fontFamily:FONT_MONO, letterSpacing:3, marginBottom:3}}>
-                      DODGE ─ SELECT SAFE ZONE
-                      {remaining > 1 && <span style={{color:C.gold, marginLeft:6}}>[{remaining}件待ち]</span>}
-                    </div>
-                    <div style={{fontSize:13, fontFamily:FONT_MONO, letterSpacing:1, marginBottom:3}}>
-                      <span style={{color:"#ff4466", animation:"dngr 0.7s infinite", fontSize:15}}>
-                        {info?.enemyIcon ?? "⚔"} {info?.enemyName ?? "敵"}
-                      </span>
-                      <span style={{color:C.muted, margin:"0 4px"}}>の</span>
-                      <span style={{color:C.gold}}>{actionLabel.icon} {actionLabel.text}</span>
-                    </div>
-                    <div style={{fontSize:11, fontFamily:FONT_MONO, color:C.accent}}>
-                      {info?.isAll
-                        ? "🌊 全員対象"
-                        : dodgeGridTargetLabel
-                          ? `→ ${dodgeGridTargetLabel.icon} ${dodgeGridTargetLabel.name} を狙う`
-                          : ""}
-                    </div>
-                  </div>
-
-                  {/* 3×3グリッド（ピクロスヒント付き） */}
-                  {(() => {
-                    const isResult = dodgeGridPhase === "result";
-                    const rowHits = [0,1,2].map(r => [0,1,2].filter(c => dodgeGridCollision.includes(r*3+c)).length);
-                    const colHits = [0,1,2].map(c => [0,1,2].filter(r => dodgeGridCollision.includes(r*3+c)).length);
-                    const HINT_SAFE  = { color:"#00ffcc", fontSize:11, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
-                    const HINT_DNGR  = { color:"#ff4466", fontSize:11, fontFamily:FONT_MONO, fontWeight:700, letterSpacing:0 };
-                    const HINT_ALL   = { color:"#4a7a9a", fontSize:11, fontFamily:FONT_MONO, letterSpacing:0 };
-                    const CELL_SIZE  = "min(64px, 7vw)";
-                    const HINT_SIZE  = "min(24px, 2.5vw)";
-                    const GAP        = 5;
-
-                    const hintStyle = (hits, total=3) => {
-                      if (isResult) return HINT_ALL;
-                      if (hits === 0)     return HINT_SAFE;
-                      if (hits === total) return HINT_DNGR;
-                      return { ...HINT_ALL, color:"#c8a84a" };
-                    };
-
-                    return (
-                      <div style={{ marginBottom:10 }}>
-                        <div style={{ display:"flex", alignItems:"center", marginBottom:GAP, paddingLeft:`calc(${HINT_SIZE} + ${GAP}px)` }}>
-                          {[0,1,2].map(c => (
-                            <div key={c} style={{
-                              width:CELL_SIZE, display:"flex", alignItems:"center", justifyContent:"center",
-                              ...(c < 2 ? { marginRight:GAP } : {}),
-                            }}>
-                              {noCollision
-                                ? <span style={HINT_SAFE}>✓</span>
-                                : isAllCollision
-                                ? <span style={HINT_DNGR}>✕</span>
-                                : <span style={hintStyle(colHits[c])}>{colHits[c]}</span>
-                              }
-                            </div>
-                          ))}
-                        </div>
-
-                        {[0,1,2].map(r => (
-                          <div key={r} style={{ display:"flex", alignItems:"center", ...(r < 2 ? { marginBottom:GAP } : {}) }}>
-                            <div style={{
-                              width:HINT_SIZE, marginRight:GAP,
-                              display:"flex", alignItems:"center", justifyContent:"center",
-                            }}>
-                              {noCollision
-                                ? <span style={HINT_SAFE}>✓</span>
-                                : isAllCollision
-                                ? <span style={HINT_DNGR}>✕</span>
-                                : <span style={hintStyle(rowHits[r])}>{rowHits[r]}</span>
-                              }
-                            </div>
-
-                            {[0,1,2].map(c => {
-                              const idx = r*3 + c;
-                              const isCollision = dodgeGridCollision.includes(idx);
-                              const isSelected  = dodgeGridSelected === idx;
-                              let bg, border, content, glow = "none";
-
-                              if (isResult) {
-                                if (isCollision) {
-                                  bg      = "rgba(255,40,80,0.28)";
-                                  border  = "1px solid #ff446699";
-                                  glow    = "0 0 10px #ff446655";
-                                  content = <span style={{fontSize:20}}>💥</span>;
-                                } else {
-                                  bg      = "rgba(0,255,160,0.10)";
-                                  border  = "1px solid #00ffcc44";
-                                  content = null;
-                                }
-                                if (isSelected) {
-                                  if (dodgeGridSuccess) {
-                                    bg      = "rgba(0,255,160,0.38)";
-                                    border  = "2px solid #00ffcc";
-                                    glow    = "0 0 16px #00ffcc99";
-                                    content = <span style={{fontSize:24, animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)"}}>✨</span>;
-                                  } else {
-                                    bg      = "rgba(255,40,80,0.48)";
-                                    border  = "2px solid #ff4466";
-                                    glow    = "0 0 16px #ff446699";
-                                    content = <span style={{fontSize:24}}>💀</span>;
-                                  }
-                                }
-                              } else {
-                                bg      = "rgba(26,74,106,0.30)";
-                                border  = `1px solid ${C.border}`;
-                                content = null;
-                              }
-
-                              return (
-                                <button
-                                  key={idx}
-                                  disabled={isResult}
-                                  onClick={() => dodgeGridPhase === "select" && onConfirmDodgeGrid(idx)}
-                                  style={{
-                                    width:CELL_SIZE, height:CELL_SIZE,
-                                    background: bg, border, borderRadius:8,
-                                    cursor: isResult ? "default" : "pointer",
-                                    display:"flex", alignItems:"center", justifyContent:"center",
-                                    boxShadow: glow,
-                                    transition:"background 0.12s, border 0.12s, box-shadow 0.12s",
-                                    position:"relative", overflow:"hidden",
-                                    ...(c < 2 ? { marginRight:GAP } : {}),
-                                  }}
-                                  onMouseEnter={e => {
-                                    if (isResult) return;
-                                    e.currentTarget.style.background = "rgba(0,200,255,0.20)";
-                                    e.currentTarget.style.border     = `1px solid ${C.accent}`;
-                                  }}
-                                  onMouseLeave={e => {
-                                    if (isResult) return;
-                                    e.currentTarget.style.background = "rgba(26,74,106,0.30)";
-                                    e.currentTarget.style.border     = `1px solid ${C.border}`;
-                                  }}
-                                >
-                                  {!isResult && (
-                                    <div style={{
-                                      position:"absolute", inset:0,
-                                      backgroundImage:"linear-gradient(135deg, rgba(0,200,255,0.03) 0%, transparent 100%)",
-                                      borderRadius:8, pointerEvents:"none",
-                                    }}/>
-                                  )}
-                                  {content}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
-
-                  {/* フッター */}
-                  {dodgeGridPhase === "select" && (
-                    <div style={{textAlign:"center"}}>
-                      <div style={{fontSize:10, color:C.muted, fontFamily:FONT_MONO, letterSpacing:2, marginBottom:6}}>
-                        {noCollision
-                          ? "💨 全てのマスが安全！"
-                          : isAllCollision
-                          ? "💥 回避不能！どこを選んでも被弾する"
-                          : `安全ゾーン ${9 - dodgeGridCollision.length} / 9 マス`}
-                      </div>
-                      <div style={{
-                        fontSize: dodgeTimeLeft <= 2 ? 20 : 16,
-                        fontFamily: FONT_MONO,
-                        fontWeight: 700,
-                        letterSpacing: 2,
-                        color: dodgeTimeLeft <= 2 ? "#ff4466" : dodgeTimeLeft <= 3 ? "#c8a84a" : C.accent,
-                        animation: dodgeTimeLeft <= 2 ? "dngr 0.5s infinite" : undefined,
-                        transition: "color 0.3s, font-size 0.2s",
-                      }}>
-                        ⏱ {dodgeTimeLeft}
-                      </div>
-                    </div>
-                  )}
-                  {dodgeGridPhase === "result" && (
-                    <div style={{
-                      fontSize:15, fontFamily:FONT_MONO, letterSpacing:3,
-                      color: dodgeGridSuccess ? C.accent2 : C.red,
-                      fontWeight:700,
-                      animation:"comboPop 0.4s cubic-bezier(0.34,1.56,0.64,1)",
-                    }}>
-                      {dodgeGridSuccess ? "✅ DODGE SUCCESS！" : "❌ DODGE FAILED"}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            {/* ── 弾幕シューティング回避UI（左カラムに移動済み） ── */}
 
             {/* ── ヒールミニゲームオーバーレイ ── */}
             {healMinigameActive && (() => {
