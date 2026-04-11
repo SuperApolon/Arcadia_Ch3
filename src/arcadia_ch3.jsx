@@ -859,7 +859,7 @@ const INITIAL_BATTLE_DEFS = {
     name:"オルガ", em:"⚔️",
     maxHp:999, atk:[99,99], elk:0, exp:0, lv:23, spd:11,pdef:18, mdef:18,
     bg:["#0a1206","#1a2a0a","#100e04"], isBoss:true, isFloating:false, isGround:true,
-    pattern:["counter","dodge","atk_all","atk","dodge","unavoidable","atk","reverse","takedown","unavoidable","elem_earth","unavoidable","atk_all","counter","dodge","LightningSlash",],
+    pattern:["counter","takedown","atk_all","atk","dodge","unavoidable","atk","reverse","takedown","atk_all","thunderbolt","unavoidable","atk_all","counter","dodge","LightningSlash",],
     unavoidableAtk:[99,99],
     elementCycle:["fire","ice","thunder","earth","none"],
   },
@@ -1233,7 +1233,7 @@ const SKILL_DEFS = {
   windmill: {
     label:"風車", icon:"⚔", color:"#d4d4d8", cost:0, cooldown:4,
     isPrephase:false, isEndphase:false,
-    dmgType:"physical", baseDmg:[18,23], weaponMult:true, atkMult:true, dmgMult:1.0,
+    dmgType:"physical", baseDmg:[23,28], weaponMult:true, atkMult:true, dmgMult:1.1,
     hits:3, target:"all", element:null, pierceCounter:false, comboBonus:1.0,
     healFlat:0, healTarget:"self",
     enemyStun:0, enemyForceAction:null, enemyForceActionTurns:0,
@@ -1285,7 +1285,7 @@ const SKILL_DEFS = {
   arrow_rain: {
     label:"アローレイン", icon:"⚔", color:"#a3e635", cost:0, cooldown:0,
     isPrephase:true, isEndphase:false,
-    dmgType:"physical", baseDmg:[18,24], weaponMult:true, atkMult:false, dmgMult:1.0,
+    dmgType:"physical", baseDmg:[23,28], weaponMult:true, atkMult:false, dmgMult:1.0,
     hits:3, target:"all", element:null, pierceCounter:false, comboBonus:1.0,
     healFlat:0, healTarget:"self",
     enemyStun:0, enemyForceAction:null, enemyForceActionTurns:0,
@@ -2195,7 +2195,7 @@ const ACTION_ENEMY_SETUP = {
   LightningSlash:[{ type:"radial_e2",count:1 },{ type:"radial_e",count:3 },{ type:"box",     count:4 },{ type:"laser_e", count:1 },{ type:"laser_area", count:1 }],
   reverse:     [{ type:"laser_e", count:8 }],
   takedown:    [{ type:"bigbox",  count:5 }],
-  biker_slash:  [{ type:"bigbox",  count:3 },{ type:"cross_e", count:1 }],
+  biker_slash:  [{ type:"diamond",  count:2 },{ type:"cross_e", count:1 },{ type:"box",  count:3 }],
 };
 const ACTION_ENEMY_DEFAULT = [{ type:"box", count:2 },{ type:"tri", count:1 }];
 
@@ -4879,6 +4879,9 @@ export default function ArcadiaCh2() {
   const [memberCdMap,          setMemberCdMap         ] = useState({}); // ← 追加
   // playerStunActive > 0: 敵スキル（テイクダウン等）によりパーティが行動不能な残りターン数
   const [playerStunActive,     setPlayerStunActive    ] = useState(0);
+  // ── 行動不能／全滅時の連続攻撃警告演出 ──────────────────────────────────
+  // null=非表示 | "in"=スライドイン中 | "show"=表示中 | "out"=スライドアウト中
+  const [continuousAtkWarn, setContinuousAtkWarn] = useState(null);
 
   // ── サーモグラフィカウンターUI state ──────────────────────────────────────
   const [thermoCounterPhase,  setThermoCounterPhase ] = useState(null);
@@ -7982,6 +7985,15 @@ export default function ArcadiaCh2() {
   }, [pendingExecution, executeMultiTurn, multiEnemies, playOlgaAtkEffect,
       takedownActive, sleepActive, straightShotActive, slowbladeActive]);
 
+  // ── 連続攻撃警告演出ヘルパー ────────────────────────────────────────────
+  const triggerContinuousAtkWarn = useCallback(() => {
+    setContinuousAtkWarn("in");
+    // in(600ms) → show(1400ms) → out(600ms)
+    setTimeout(() => setContinuousAtkWarn("show"), 600);
+    setTimeout(() => setContinuousAtkWarn("out"),  2000);
+    setTimeout(() => setContinuousAtkWarn(null),   2600);
+  }, []);
+
   // ── プレイヤースタン中：コマンドフェーズ開始時に全員 heal を自動セットして即実行 ──
   useEffect(() => {
     if (playerStunActive <= 0) return;
@@ -7991,11 +8003,13 @@ export default function ArcadiaCh2() {
     const stunCmds = Object.fromEntries(PARTY_DEFS.map(m => [m.id, "wait"]));
     const stunTgts = Object.fromEntries(PARTY_DEFS.map(m => [m.id, 0]));
     setBtlLogs(prev => [...prev, `🦵 行動不能！ パーティは動けない（残${playerStunActive}T）`].slice(-20));
+    // ── 警告演出を起動 ────────────────────────────────────────────────
+    triggerContinuousAtkWarn();
     setInputPhase("execute");
     setRhythmPhase(null);
     setPendingRhythmExecution(null);
     setPendingExecution({ mode:"multi", cmds:stunCmds, targets:stunTgts, rhythmResultsSnapshot: null });
-  }, [playerStunActive, inputPhase, victory, defeat, multiEnemies]);
+  }, [playerStunActive, inputPhase, victory, defeat, multiEnemies, triggerContinuousAtkWarn]);
   // ── デバッグ：バトルのコマンド選択中に「-」キー → シューティング直接起動 ──
   // 全生存敵の現在ターンの攻撃パターンから「最も難しい」ものを選んで起動する
   React.useEffect(() => {
@@ -8336,6 +8350,26 @@ export default function ArcadiaCh2() {
     }
     // keyframes テンプレートリテラルの末尾（バッククォート閉じの直前）に追加：
     @keyframes holdPulse { 0%,100%{opacity:0.85;transform:scaleX(1)} 50%{opacity:1;transform:scaleX(1.18)} }
+    @keyframes contAtkSlideIn  { 0%{opacity:0;transform:translateX(-110%)} 60%{opacity:1;transform:translateX(6%)} 100%{opacity:1;transform:translateX(0)} }
+    @keyframes contAtkSlideOut { 0%{opacity:1;transform:translateX(0)} 40%{opacity:1;transform:translateX(6%)} 100%{opacity:0;transform:translateX(110%)} }
+    @keyframes contAtkPulse    { 0%,100%{text-shadow:0 0 18px #ff0000cc,0 0 40px #ff000088} 50%{text-shadow:0 0 40px #ffffff,0 0 80px #ff0000cc,0 0 120px #ff000044} }
+    @keyframes contAtkBg       { 0%,100%{background-position:0% 50%} 50%{background-position:100% 50%} }
+    @keyframes contAtkScan     { 0%{top:-4px;opacity:0.7} 100%{top:100%;opacity:0} }
+    @keyframes dangerFadeIn    { 0%{opacity:0;transform:scale(1.08)} 100%{opacity:1;transform:scale(1)} }
+    @keyframes dangerFadeOut   { 0%{opacity:1;transform:scale(1)} 100%{opacity:0;transform:scale(0.94)} }
+    @keyframes dangerPulseRed  { 0%,100%{box-shadow:0 0 0 0 #ff000000,inset 0 0 60px #ff000033} 50%{box-shadow:0 0 80px 20px #ff000055,inset 0 0 120px #ff000066} }
+    @keyframes dangerTxtIn     { 0%{opacity:0;transform:translateY(-40px) scaleY(1.4)} 60%{opacity:1;transform:translateY(4px) scaleY(0.96)} 100%{opacity:1;transform:translateY(0) scaleY(1)} }
+    @keyframes dangerSubIn     { 0%{opacity:0;letter-spacing:20px} 100%{opacity:1;letter-spacing:6px} }
+    @keyframes dangerChrome    { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
+    @keyframes dangerScanH     { 0%{transform:translateY(-100%)} 100%{transform:translateY(100vh)} }
+    @keyframes dangerScanV     { 0%{transform:translateX(-100%)} 100%{transform:translateX(100vw)} }
+    @keyframes dangerCornerBlnk{ 0%,49%{opacity:1} 50%,100%{opacity:0} }
+    @keyframes dangerVigPulse  { 0%,100%{opacity:0.7} 50%{opacity:1} }
+    @keyframes dangerGlitch1   { 0%,100%{clip-path:inset(0 0 95% 0);transform:translate(-4px,0)} 50%{clip-path:inset(30% 0 40% 0);transform:translate(4px,0)} }
+    @keyframes dangerGlitch2   { 0%,100%{clip-path:inset(60% 0 20% 0);transform:translate(3px,0)} 50%{clip-path:inset(10% 0 80% 0);transform:translate(-3px,0)} }
+    @keyframes dangerBarFlash  { 0%,100%{opacity:1;transform:scaleX(1)} 25%{opacity:0.4;transform:scaleX(0.96)} 75%{opacity:0.8;transform:scaleX(1.02)} }
+    @keyframes dangerIconBeat  { 0%,100%{transform:scale(1) rotate(0deg);filter:drop-shadow(0 0 8px #ff4444)} 20%{transform:scale(1.3) rotate(-8deg);filter:drop-shadow(0 0 24px #ff0000)} 40%{transform:scale(0.9) rotate(5deg)} 60%{transform:scale(1.2) rotate(-4deg);filter:drop-shadow(0 0 20px #ff8800)} 80%{transform:scale(0.95) rotate(2deg)} }
+    @keyframes dangerHexSpin   { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
   
     `;
 
@@ -9219,6 +9253,213 @@ export default function ArcadiaCh2() {
             : (showAtkAllAnim ? "dragonApproach 0.18s linear infinite" : "none"),
       }}>
         <style>{keyframes}</style>
+
+        {/* ══════════════════════════════════════════════════════
+            行動不能／連続攻撃警告テロップ【全画面アラート演出】
+            continuousAtkWarn: "in" | "show" | "out" | null
+        ══════════════════════════════════════════════════════ */}
+        {continuousAtkWarn && (
+          <div style={{
+            position:"fixed", inset:0, zIndex:480, pointerEvents:"none",
+            animation:
+              continuousAtkWarn === "in"  ? "dangerFadeIn  0.45s cubic-bezier(0.22,1,0.36,1) both"
+            : continuousAtkWarn === "out" ? "dangerFadeOut 0.5s cubic-bezier(0.64,0,0.78,0) both"
+            : "none",
+          }}>
+
+            {/* ── レイヤー1: 深暗転 + 赤ビネット脈動 ── */}
+            <div style={{
+              position:"absolute", inset:0,
+              background:"radial-gradient(ellipse at center, #1a0000ee 0%, #000000f5 70%)",
+              animation:"dangerVigPulse 0.6s ease-in-out infinite",
+            }}/>
+
+            {/* ── レイヤー2: 水平スキャンライン ── */}
+            <div style={{
+              position:"absolute", inset:0, overflow:"hidden", pointerEvents:"none",
+            }}>
+              {[0,1,2].map(i => (
+                <div key={i} style={{
+                  position:"absolute", left:0, right:0, height:"3px",
+                  background:"linear-gradient(90deg,transparent 0%,#ff000066 20%,#ff4444bb 50%,#ff000066 80%,transparent 100%)",
+                  animation:`dangerScanH ${1.1 + i * 0.37}s linear ${i * 0.28}s infinite`,
+                  top:0,
+                }}/>
+              ))}
+              {/* 垂直スキャン */}
+              {[0,1].map(i => (
+                <div key={i} style={{
+                  position:"absolute", top:0, bottom:0, width:"2px",
+                  background:"linear-gradient(180deg,transparent,#ff000044,#ff444488,#ff000044,transparent)",
+                  animation:`dangerScanV ${1.8 + i * 0.5}s linear ${i * 0.4}s infinite`,
+                  left:0,
+                }}/>
+              ))}
+            </div>
+
+            {/* ── レイヤー3: CRTスキャンライン格子 ── */}
+            <div style={{
+              position:"absolute", inset:0, pointerEvents:"none",
+              backgroundImage:"repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,0,0,0.04) 3px,rgba(255,0,0,0.04) 4px)",
+            }}/>
+
+            {/* ── レイヤー4: 四隅警告ブラケット ── */}
+            {[[{top:16,left:16},{borderTop:"3px solid #ff2222",borderLeft:"3px solid #ff2222"}],
+              [{top:16,right:16},{borderTop:"3px solid #ff2222",borderRight:"3px solid #ff2222"}],
+              [{bottom:16,left:16},{borderBottom:"3px solid #ff2222",borderLeft:"3px solid #ff2222"}],
+              [{bottom:16,right:16},{borderBottom:"3px solid #ff2222",borderRight:"3px solid #ff2222"}],
+            ].map(([pos, border], i) => (
+              <div key={i} style={{
+                position:"absolute", ...pos,
+                width:48, height:48, ...border,
+                animation:"dangerCornerBlnk 0.5s step-end infinite",
+                animationDelay:`${i * 0.12}s`,
+              }}/>
+            ))}
+
+            {/* ── レイヤー5: 上部 ALERT バー ── */}
+            <div style={{
+              position:"absolute", top:0, left:0, right:0,
+              height:"clamp(36px,7vh,52px)",
+              background:"linear-gradient(90deg,#3a0000,#cc0000 30%,#ff2200 50%,#cc0000 70%,#3a0000)",
+              backgroundSize:"300% 100%",
+              animation:"dangerChrome 1.4s linear infinite",
+              borderBottom:"2px solid #ff4444",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              gap:16,
+            }}>
+              <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:"clamp(8px,1.8vw,12px)",letterSpacing:8,color:"#ffcccc",textShadow:"0 0 8px #ff0000"}}>
+                ⚠ ALERT
+              </span>
+              <div style={{width:1,height:18,background:"#ff444466"}}/>
+              <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:"clamp(8px,1.8vw,11px)",letterSpacing:5,color:"#ff8888",animation:"arcadiaBlnk 0.4s step-end infinite"}}>
+                PARTY STUNNED
+              </span>
+              <div style={{width:1,height:18,background:"#ff444466"}}/>
+              <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:"clamp(8px,1.8vw,12px)",letterSpacing:8,color:"#ffcccc",textShadow:"0 0 8px #ff0000"}}>
+                ALERT ⚠
+              </span>
+            </div>
+
+            {/* ── レイヤー6: 下部 ALERT バー ── */}
+            <div style={{
+              position:"absolute", bottom:0, left:0, right:0,
+              height:"clamp(36px,7vh,52px)",
+              background:"linear-gradient(90deg,#3a0000,#cc0000 30%,#ff2200 50%,#cc0000 70%,#3a0000)",
+              backgroundSize:"300% 100%",
+              animation:"dangerChrome 1.4s linear 0.7s infinite",
+              borderTop:"2px solid #ff4444",
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}>
+              <span style={{fontFamily:"'Share Tech Mono',monospace",fontSize:"clamp(8px,1.8vw,11px)",letterSpacing:4,color:"#ff8888",animation:"arcadiaBlnk 0.5s step-end 0.25s infinite"}}>
+                ── ENEMY CONSECUTIVE ATTACK ──
+              </span>
+            </div>
+
+            {/* ── レイヤー7: センター メインアラート ── */}
+            <div style={{
+              position:"absolute", inset:0,
+              display:"flex", flexDirection:"column",
+              alignItems:"center", justifyContent:"center",
+              gap:"clamp(10px,2.5vh,20px)",
+            }}>
+
+              {/* ⚠ ビートアイコン */}
+              <div style={{
+                fontSize:"clamp(40px,10vw,72px)",
+                animation:"dangerIconBeat 0.55s ease-in-out infinite",
+                lineHeight:1,
+              }}>⚠</div>
+
+              {/* DANGER タイトル（グリッチ効果） */}
+              <div style={{position:"relative", textAlign:"center"}}>
+                {/* ベーステキスト */}
+                <div style={{
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:"clamp(28px,9vw,80px)",
+                  fontWeight:900,
+                  letterSpacing:"clamp(2px,1vw,8px)",
+                  color:"#ff2222",
+                  textShadow:"0 0 30px #ff0000cc, 0 0 60px #ff000088, 0 0 100px #ff000044",
+                  animation:"dangerBarFlash 0.55s ease-in-out infinite",
+                  lineHeight:1,
+                }}>DANGER</div>
+                {/* グリッチレイヤー1 */}
+                <div style={{
+                  position:"absolute", inset:0,
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:"clamp(28px,9vw,80px)",
+                  fontWeight:900,
+                  letterSpacing:"clamp(2px,1vw,8px)",
+                  color:"#00ffcc",
+                  opacity:0.55,
+                  animation:"dangerGlitch1 0.18s step-end infinite",
+                  lineHeight:1,
+                  pointerEvents:"none",
+                }}>DANGER</div>
+                {/* グリッチレイヤー2 */}
+                <div style={{
+                  position:"absolute", inset:0,
+                  fontFamily:"'Share Tech Mono',monospace",
+                  fontSize:"clamp(28px,9vw,80px)",
+                  fontWeight:900,
+                  letterSpacing:"clamp(2px,1vw,8px)",
+                  color:"#ff6600",
+                  opacity:0.45,
+                  animation:"dangerGlitch2 0.22s step-end 0.07s infinite",
+                  lineHeight:1,
+                  pointerEvents:"none",
+                }}>DANGER</div>
+              </div>
+
+              {/* 水平区切りライン */}
+              <div style={{
+                width:"clamp(200px,60vw,480px)", height:"2px",
+                background:"linear-gradient(90deg,transparent,#ff4444,#ff0000,#ff4444,transparent)",
+                animation:"dangerBarFlash 0.7s ease-in-out infinite",
+              }}/>
+
+              {/* メインメッセージ */}
+              <div style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:"clamp(13px,3.5vw,26px)",
+                fontWeight:900,
+                color:"#ffffff",
+                textAlign:"center",
+                letterSpacing:"clamp(1px,0.4vw,3px)",
+                textShadow:"0 0 20px #ff0000cc, 0 0 40px #ff000066",
+                animation:"dangerTxtIn 0.5s cubic-bezier(0.22,1,0.36,1) both, contAtkPulse 0.8s 0.5s ease-in-out infinite",
+                padding:"0 24px",
+                lineHeight:1.5,
+              }}>
+                行動不能により敵の連続攻撃が発生！
+              </div>
+
+              {/* サブラベル */}
+              <div style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:"clamp(8px,1.8vw,12px)",
+                letterSpacing:6,
+                color:"#ff8888aa",
+                textShadow:"0 0 8px #ff000088",
+                animation:"dangerSubIn 0.6s 0.2s cubic-bezier(0.22,1,0.36,1) both, arcadiaBlnk 1.1s 0.8s step-end infinite",
+              }}>
+                ENEMY CONSECUTIVE ATTACK IN PROGRESS
+              </div>
+
+            </div>
+
+            {/* ── レイヤー8: 左右エッジグロー ── */}
+            <div style={{position:"absolute",top:0,left:0,bottom:0,width:"clamp(40px,6vw,80px)",
+              background:"linear-gradient(90deg,#ff000033,transparent)",
+              animation:"dangerVigPulse 0.6s ease-in-out infinite",pointerEvents:"none"}}/>
+            <div style={{position:"absolute",top:0,right:0,bottom:0,width:"clamp(40px,6vw,80px)",
+              background:"linear-gradient(270deg,#ff000033,transparent)",
+              animation:"dangerVigPulse 0.6s ease-in-out 0.3s infinite",pointerEvents:"none"}}/>
+
+          </div>
+        )}
+
         {/* ── ドラゴン突進フラッシュ（末尾に白く大フラッシュ） ── */}
         {showAtkAllAnim && (
           <>
