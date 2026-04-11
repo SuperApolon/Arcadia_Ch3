@@ -2166,36 +2166,47 @@ const ENEMY_TYPES = {
              attackSeq:["laser_line","burst","scatter","single"], shootBase:55 },
   laser_e: { shape:"diamond",  size:10, color:"#ff00ff", hpMax:1, spd:0.8,
              attackSeq:["laser_line","laser_line"],    shootBase:60 },
+  laser_area: { shape:"diamond",  size:10, color:"#ff00ff", hpMax:1, spd:0.8,
+             attackSeq:["laser_area","single","single","burst"],    shootBase:90 },
   spinner: { shape:"hexagon",  size:13, color:"#00ffff", hpMax:1, spd:0.7,
-             attackSeq:["single","burst"],        shootBase:65 },
+             attackSeq:["laser_rotate"],        shootBase:60 },
   cross_e: { shape:"star",     size:16, color:"#ffffff", hpMax:3, spd:0.5,
              attackSeq:["laser_cross","scatter","burst"],   shootBase:70 },
   chaos_e: { shape:"hexagon",  size:18, color:"#ff2266", hpMax:3, spd:0.6,
              attackSeq:["laser_cross_rnd","scatter","burst"], shootBase:75 },
   radial_e:{ shape:"circle",   size:14, color:"#ffff00", hpMax:2, spd:0.9,
              attackSeq:["radial","radial","radial","radial"],    shootBase:30 },
+  radial_e2:{ shape:"circle",   size:14, color:"#ffff00", hpMax:2, spd:0.9,
+  attackSeq:["laser_grid","laser_grid","laser_grid","laser_grid"],    shootBase:120 },
 };
 
 const ACTION_ENEMY_SETUP = {
   atk:         [{ type:"box",     count:5 },{ type:"tri", count:5 }],
-  atk_all:     [{ type:"star",    count:5 },{ type:"diamond", count:5 },{ type:"box", count:5 }],
-  counter:     [{ type:"diamond", count:3 },{ type:"laser_e", count:5 }],
-  unavoidable: [{ type:"chaos_e", count:1 },{ type:"dot", count:5 }],
-  elem_fire:   [{ type:"tri",    count:10 },{ type:"dot", count:15 }],
+  atk_all:     [{ type:"star",    count:3 },{ type:"diamond", count:3 },{ type:"box", count:4 }],
+  counter:     [{ type:"box", count:5 },{ type:"laser_e", count:1 }],
+  unavoidable: [{ type:"chaos_e", count:1 }],
+  elem_fire:   [{ type:"spinner",    count:3 },{ type:"cross_e", count:1 }],
   elem_ice:    [{ type:"box", count:10 }],
-  elem_thunder:[{ type:"laser_e", count:7 }],
+  elem_thunder:[{ type:"spinner", count:3 },{ type:"laser_e", count:4 }],
   elem_earth:  [{ type:"bigbox",  count:5 },{ type:"tri",     count:3 }],
   heal:        [{ type:"dot",     count:30 }],
   enrage:      [{ type:"star",    count:2 },{ type:"chaos_e", count:1 }],
-  StellaFritz: [{ type:"chaos_e", count:1 },{ type:"radial_e", count:5 },{ type:"box",     count:5 }],
-  LightningSlash:[{ type:"chaos_e",count:1 },{ type:"radial_e",count:5 },{ type:"box",     count:5 },{ type:"laser_e",     count:5 }],
+  StellaFritz: [{ type:"chaos_e", count:1 },{ type:"radial_e", count:4 },{ type:"spinner",     count:2 },{ type:"laser_area", count:1 }],
+  LightningSlash:[{ type:"radial_e2",count:1 },{ type:"radial_e",count:3 },{ type:"box",     count:4 },{ type:"laser_e", count:1 },{ type:"laser_area", count:1 }],
   reverse:     [{ type:"laser_e", count:8 }],
   takedown:    [{ type:"bigbox",  count:5 }],
 };
 const ACTION_ENEMY_DEFAULT = [{ type:"box", count:2 }];
 
-// レーザー長さ設定（ピクセル）
-const LASER_LEN = 600;          // 回転・交差レーザーの腕の長さ（短くするにはここを変更）
+// ─── レーザー腕の長さ設定（ピクセル）─────────────────────────────────────────
+const LASER_LEN_ROTATE    = 240;  // 回転レーザー（laser_rotate）の腕の長さ
+const LASER_LEN_CROSS     = 600;  // 交差レーザー（laser_cross）の腕の長さ
+const LASER_LEN_CROSS_RND = 600;  // 乱交差レーザー（laser_cross_rnd）の腕の長さ
+
+// ─── laser_cross_rnd 回転速度設定 ─────────────────────────────────────────────
+// 大きくすると速く回転。負にすると逆回転。0.02 が初期値。
+const LASER_CROSS_RND_ANG_V = 0.01; // 乱交差レーザーの回転角速度（rad/frame）
+
 // 予兆フェーズのフレーム数（この間は細い点滅線のみ、当たり判定なし）
 const LASER_WARN_FRAMES = 45;   // 約1.35秒の予兆時間（FPS_MS=30ms換算）
 
@@ -2206,9 +2217,11 @@ const BULLET_TYPE_DEFS = {
   burst:           { color:"#ff9922", r:4,  dmg:5,  hitWeight:1, label:"連射",       speed:4.0 },
   scatter:         { color:"#ff44aa", r:4,  dmg:6,  hitWeight:1, label:"ばら撒き",   speed:1.2 },
   laser_line:      { color:"#ff00ff", r:3,  dmg:12, hitWeight:5, label:"直線ﾚｰｻﾞｰ", speed:0, isLineLaser:true,  laserW:10 },
-  laser_rotate:    { color:"#00ffff", r:3,  dmg:14, hitWeight:5, label:"回転ﾚｰｻﾞｰ", speed:0, isRotLaser:true,  laserW:8  },
-  laser_cross:     { color:"#ffff44", r:3,  dmg:12, hitWeight:5, label:"交差ﾚｰｻﾞｰ", speed:0, isCrossLaser:true,laserW:6  },
-  laser_cross_rnd: { color:"#ff8844", r:3,  dmg:10, hitWeight:5, label:"乱交差",     speed:0, isCrossRnd:true,  laserW:5  },
+  laser_rotate:    { color:"#00ffff", r:3,  dmg:14, hitWeight:5, label:"回転ﾚｰｻﾞｰ", speed:0, isRotLaser:true,  laserW:10  },
+  laser_cross:     { color:"#ffff44", r:3,  dmg:12, hitWeight:5, label:"交差ﾚｰｻﾞｰ", speed:0, isCrossLaser:true,laserW:20  },
+  laser_cross_rnd: { color:"#ff8844", r:3,  dmg:10, hitWeight:5, label:"乱交差",     speed:0, isCrossRnd:true,  laserW:20  },
+  laser_grid:      { color:"#00ff88", r:3,  dmg:13, hitWeight:5, label:"格子ﾚｰｻﾞｰ", speed:0, isGridLaser:true, laserW:10   },
+  laser_area:      { color:"#ff2200", r:3,  dmg:0,  hitWeight:8, label:"ｴﾘｱ砲撃",     speed:0, isAreaLaser:true,  laserW:4    },
   radial:          { color:"#44ffff", r:5,  dmg:7,  hitWeight:1, label:"全方位",     speed:0.9 },
   oneshot:         { color:"#ffffff", r:10, dmg:999,hitWeight:10,label:"一撃死",     speed:0.8, isOneshot:true },
 };
@@ -2354,23 +2367,43 @@ const DanmakuShooter = React.memo(({
           warnLife:LASER_WARN_FRAMES,isWarning:true});
         return;
       }
+      if(def.isAreaLaser){
+        // エリアレーザー: 画面下半分を炎上させる面攻撃。予兆後に高速HP削り。
+        const ch = canvas.height;
+        const areaY = ch * 0.5; // 下半分の境界Y座標
+        s.lasers.push({type:"area", areaY,
+          life:90, maxLife:90, w:def.laserW, color:def.color, hitWeight:def.hitWeight, eid:e,
+          warnLife:LASER_WARN_FRAMES*2, isWarning:true}); // 予兆は通常の2倍時間
+        return;
+      }
+      if(def.isGridLaser){
+        // 格子レーザー: 横4本 + 縦5本 を画面全体に均等配置
+        const cols = 8; const rows = 8;
+        const cw = canvas.width; const ch = canvas.height;
+        const hLines = Array.from({length:rows}, (_,i)=> Math.round(ch*(i+1)/(rows+1)));
+        const vLines = Array.from({length:cols}, (_,i)=> Math.round(cw*(i+1)/(cols+1)));
+        s.lasers.push({type:"grid", hLines, vLines,
+          life:90, maxLife:90, w:def.laserW, color:def.color, hitWeight:def.hitWeight, eid:e,
+          warnLife:LASER_WARN_FRAMES, isWarning:true});
+        return;
+      }
       if(def.isRotLaser){
         // 予兆フェーズ付き回転レーザー（予兆中は静止）
         s.lasers.push({type:"rotate",cx:e.x,cy:e.y,angle:0,angV:0.05,life:100,maxLife:100,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
-          warnLife:LASER_WARN_FRAMES,isWarning:true});
+          laserLen:LASER_LEN_ROTATE,warnLife:LASER_WARN_FRAMES,isWarning:true});
         return;
       }
       if(def.isCrossLaser){
         const angles=[0,Math.PI*0.25,Math.PI*0.5,Math.PI*0.75,Math.PI,Math.PI*1.25,Math.PI*1.5,Math.PI*1.75];
         s.lasers.push({type:"cross",cx:canvas.width/2,cy:canvas.height/2,angles,angV:0,life:90,maxLife:90,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
-          warnLife:LASER_WARN_FRAMES,isWarning:true});
+          laserLen:LASER_LEN_CROSS,warnLife:LASER_WARN_FRAMES,isWarning:true});
         return;
       }
       if(def.isCrossRnd){
         const cnt=5+Math.floor(Math.random()*4);
         const angles=Array.from({length:cnt},()=>Math.random()*Math.PI*2);
-        s.lasers.push({type:"cross",cx:canvas.width/2,cy:canvas.height/2,angles,angV:0.02*(Math.random()<0.5?1:-1),life:85,maxLife:85,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
-          warnLife:LASER_WARN_FRAMES,isWarning:true});
+        s.lasers.push({type:"cross",cx:canvas.width/2,cy:canvas.height/2,angles,angV:LASER_CROSS_RND_ANG_V*(Math.random()<0.5?1:-1),life:85,maxLife:85,w:def.laserW,color:def.color,hitWeight:def.hitWeight,eid:e,
+          laserLen:LASER_LEN_CROSS_RND,warnLife:LASER_WARN_FRAMES,isWarning:true});
         return;
       }
       if(atkType==="burst"){
@@ -2409,7 +2442,7 @@ const DanmakuShooter = React.memo(({
           const a=lz.angle+k*Math.PI;
           const ex=Math.cos(a),ey=Math.sin(a);
           const t=(sx-lz.cx)*ex+(sy-lz.cy)*ey;
-          if(t<0||t>LASER_LEN) continue; // LASER_LEN 外は判定なし
+          if(t<0||t>(lz.laserLen||600)) continue; // laserLen 外は判定なし
           const px=lz.cx+t*ex,py=lz.cy+t*ey;
           if(Math.sqrt((sx-px)**2+(sy-py)**2)<lz.w/2+shipR-3) return true;
         }
@@ -2419,11 +2452,21 @@ const DanmakuShooter = React.memo(({
         for(const a of lz.angles){
           const ex=Math.cos(a),ey=Math.sin(a);
           const t=(sx-lz.cx)*ex+(sy-lz.cy)*ey;
-          if(Math.abs(t)>LASER_LEN) continue; // LASER_LEN 外は判定なし
+          if(Math.abs(t)>(lz.laserLen||600)) continue; // laserLen 外は判定なし
           const px=lz.cx+t*ex,py=lz.cy+t*ey;
           if(Math.sqrt((sx-px)**2+(sy-py)**2)<lz.w/2+shipR-3) return true;
         }
         return false;
+      }
+      if(lz.type==="grid"){
+        const hw = lz.w/2+shipR-2;
+        for(const y of lz.hLines){ if(Math.abs(sy-y)<hw) return true; }
+        for(const x of lz.vLines){ if(Math.abs(sx-x)<hw) return true; }
+        return false;
+      }
+      if(lz.type==="area"){
+        // 画面下半分エリア: areaY 以下にいると被弾
+        return sy >= lz.areaY - shipR;
       }
       return false;
     }
@@ -2511,12 +2554,12 @@ const DanmakuShooter = React.memo(({
         if(Math.sqrt(dx*dx+dy*dy)<SHIP_R-2+b.def.r-2){
           spawnPart(s.shipX,s.shipY,"#ff4466",12);
           s.bullets.splice(i,1);
-          // 被弾記録
+          // 被弾記録 ─ weight が体力。10で即死
           const w = b.def.isOneshot ? 10 : (b.def.hitWeight||1);
           hitAccRef.current.count++;
           hitAccRef.current.weight = Math.min(10, hitAccRef.current.weight + w);
-          // 一撃死弾はゲーム終了
-          if(b.def.isOneshot){ s.dead=true; draw(); finishSession(false); return; }
+          // HIT10(weight>=10) または一撃死弾で即時失敗
+          if(b.def.isOneshot || hitAccRef.current.weight >= 10){ s.dead=true; draw(); finishSession(false); return; }
         }
       }
 
@@ -2526,8 +2569,8 @@ const DanmakuShooter = React.memo(({
         // 予兆フェーズのカウントダウン（isWarning中はlife消費なし・当たり判定なし）
         if(lz.isWarning){
           lz.warnLife--;
-          // line レーザーの予兆中はプレイヤー位置を追尾して固定
-          if(lz.type==="line") lz.laserX=s.shipX;
+          // line レーザーの予兆中はプレイヤー位置を追尾（残り33f≒1秒で打ち切り）
+          if(lz.type==="line" && lz.warnLife > 33) lz.laserX=s.shipX;
           if(lz.warnLife<=0){ lz.isWarning=false; } // 予兆終了→本番開始
           continue; // 予兆中はlife/hitともスキップ
         }
@@ -2537,11 +2580,19 @@ const DanmakuShooter = React.memo(({
         if(lz.life<=0){s.lasers.splice(i,1);continue;}
         if(hitLaser(lz,s.shipX,s.shipY,SHIP_R)){
           spawnPart(s.shipX,s.shipY,"#ff44ff",6);
-          // 毎フレーム加算すると多すぎるため5フレームに1回ウェイト加算
-          if(s.frame%5===0){
+          if(lz.type==="area"){
+            // エリアレーザー: 毎フレーム weight を少量加算（3f≒0.09sec で +1weight）
+            if(s.frame%3===0){
+              hitAccRef.current.count++;
+              hitAccRef.current.weight = Math.min(10, hitAccRef.current.weight + 1);
+              if(hitAccRef.current.weight >= 10){ s.dead=true; draw(); finishSession(false); return; }
+            }
+          } else if(s.frame%5===0){
+            // 通常レーザー: 5フレームに1回ウェイト加算
             const w = lz.hitWeight||5;
             hitAccRef.current.count++;
             hitAccRef.current.weight = Math.min(10, hitAccRef.current.weight + w);
+            if(hitAccRef.current.weight >= 10){ s.dead=true; draw(); finishSession(false); return; }
           }
         }
       }
@@ -2611,13 +2662,33 @@ const DanmakuShooter = React.memo(({
           for(let k=0;k<2;k++){
             const a=lz.angle+k*Math.PI;
             ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);
-            ctx.lineTo(lz.cx+Math.cos(a)*LASER_LEN,lz.cy+Math.sin(a)*LASER_LEN);ctx.stroke();
+            ctx.lineTo(lz.cx+Math.cos(a)*(lz.laserLen||600),lz.cy+Math.sin(a)*(lz.laserLen||600));ctx.stroke();
           }
         }else if(lz.type==="cross"){
           for(const a of lz.angles){
-            const ex=Math.cos(a)*LASER_LEN,ey=Math.sin(a)*LASER_LEN;
+            const ex=Math.cos(a)*(lz.laserLen||600),ey=Math.sin(a)*(lz.laserLen||600);
             ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx+ex,lz.cy+ey);ctx.stroke();
             ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx-ex,lz.cy-ey);ctx.stroke();
+          }
+        }else if(lz.type==="grid"){
+          const GCW=canvas.width, GCH=canvas.height;
+          for(const y of lz.hLines){ ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(GCW,y);ctx.stroke(); }
+          for(const x of lz.vLines){ ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,GCH);ctx.stroke(); }
+        }else if(lz.type==="area"){
+          // エリアレーザー予兆: 下半分を赤く点滅させ境界線を表示
+          const CW=canvas.width, CH=canvas.height;
+          const aY=lz.areaY;
+          // 下半分の赤フィル（半透明）
+          ctx.globalAlpha = blinkAlpha * 0.25;
+          ctx.fillStyle = lz.color;
+          ctx.fillRect(0, aY, CW, CH - aY);
+          // 境界線（点滅ライン）
+          ctx.globalAlpha = blinkAlpha;
+          ctx.beginPath(); ctx.moveTo(0, aY); ctx.lineTo(CW, aY); ctx.stroke();
+          // スキャンライン（縦縞でエリア感を強調）
+          ctx.globalAlpha = blinkAlpha * 0.12;
+          for(let sx=0; sx<CW; sx+=18){
+            ctx.beginPath(); ctx.moveTo(sx, aY); ctx.lineTo(sx, CH); ctx.stroke();
           }
         }
         ctx.setLineDash([]);
@@ -2627,8 +2698,8 @@ const DanmakuShooter = React.memo(({
           ctx.font="bold 9px 'Share Tech Mono',monospace";
           ctx.fillStyle=lz.color;
           ctx.textAlign="center";
-          const tx = lz.type==="line" ? lz.laserX : lz.cx;
-          const ty = lz.type==="line" ? canvas.height*0.5 : lz.cy - 18;
+          const tx = lz.type==="line" ? lz.laserX : canvas.width/2;
+          const ty = lz.type==="line" || lz.type==="grid" ? canvas.height*0.5 : lz.cy - 18;
           ctx.fillText("⚠ FIRE!",tx,ty);
         }
         ctx.shadowBlur=0; ctx.restore();
@@ -2650,14 +2721,57 @@ const DanmakuShooter = React.memo(({
         for(let k=0;k<2;k++){
           const a=lz.angle+k*Math.PI;
           ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);
-          ctx.lineTo(lz.cx+Math.cos(a)*LASER_LEN,lz.cy+Math.sin(a)*LASER_LEN);ctx.stroke();
+          ctx.lineTo(lz.cx+Math.cos(a)*(lz.laserLen||600),lz.cy+Math.sin(a)*(lz.laserLen||600));ctx.stroke();
         }
       }else if(lz.type==="cross"){
         for(const a of lz.angles){
-          const ex=Math.cos(a)*LASER_LEN,ey=Math.sin(a)*LASER_LEN;
+          const ex=Math.cos(a)*(lz.laserLen||600),ey=Math.sin(a)*(lz.laserLen||600);
           ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx+ex,lz.cy+ey);ctx.stroke();
           ctx.beginPath();ctx.moveTo(lz.cx,lz.cy);ctx.lineTo(lz.cx-ex,lz.cy-ey);ctx.stroke();
         }
+      }else if(lz.type==="grid"){
+        // 格子レーザー本番: 横線＋縦線を画面全体に描画
+        const GCW=canvas.width, GCH=canvas.height;
+        for(const y of lz.hLines){ ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(GCW,y);ctx.stroke(); }
+        for(const x of lz.vLines){ ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,GCH);ctx.stroke(); }
+        // 交点にグロー円
+        ctx.globalAlpha=(alpha*0.7);
+        ctx.fillStyle=lz.color;
+        for(const y of lz.hLines){
+          for(const x of lz.vLines){
+            ctx.beginPath();ctx.arc(x,y,lz.w*0.9,0,Math.PI*2);ctx.fill();
+          }
+        }
+      }else if(lz.type==="area"){
+        // エリアレーザー本番: 下半分を真っ赤に炎上
+        const CW=canvas.width, CH=canvas.height;
+        const aY=lz.areaY;
+        const lifeRatio = lz.life / lz.maxLife;
+        // ベースフィル（パルスする赤）
+        ctx.globalAlpha = alpha * 0.45;
+        const grad = ctx.createLinearGradient(0, aY, 0, CH);
+        grad.addColorStop(0, "#ff2200cc");
+        grad.addColorStop(1, "#ff660099");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, aY, CW, CH - aY);
+        // 境界ライン（太いグロー）
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = lz.color; ctx.lineWidth = 4;
+        ctx.shadowColor = lz.color; ctx.shadowBlur = 20;
+        ctx.beginPath(); ctx.moveTo(0, aY); ctx.lineTo(CW, aY); ctx.stroke();
+        // スキャンライン（横縞エフェクト）
+        ctx.globalAlpha = alpha * 0.18;
+        ctx.lineWidth = 2;
+        for(let sy=aY+8; sy<CH; sy+=16){
+          ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(CW, sy); ctx.stroke();
+        }
+        // 上部に"DANGER ZONE"テキスト
+        ctx.globalAlpha = alpha * 0.9;
+        ctx.font = "bold 10px 'Share Tech Mono',monospace";
+        ctx.fillStyle = lz.color;
+        ctx.textAlign = "center";
+        ctx.shadowBlur = 10;
+        ctx.fillText("⚠ DANGER ZONE -- MOVE FORWARD!", CW/2, aY - 6);
       }
       ctx.shadowBlur=0; ctx.restore();
     }
@@ -2672,6 +2786,24 @@ const DanmakuShooter = React.memo(({
         ctx.beginPath();ctx.moveTo(s.shipX+dr,s.shipY-dr);ctx.lineTo(s.shipX-dr,s.shipY+dr);ctx.stroke();
         ctx.shadowBlur=0;ctx.restore();
         return;
+      }
+      // ── HP バー（自機の上）── HIT weight と連動: weight10=HP0
+      {
+        const wt = hitAccRef.current.weight;
+        const hpPct = Math.max(0, (10 - wt) / 10);
+        const bw = 40, bh = 4;
+        const bx = s.shipX - bw/2, by = s.shipY - SHIP_R - 12;
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = "#001a00";
+        ctx.fillRect(bx, by, bw, bh);
+        const hpColor = hpPct > 0.5 ? "#44ff44" : hpPct > 0.25 ? "#ffaa00" : "#ff2222";
+        ctx.fillStyle = hpColor;
+        ctx.shadowColor = hpColor; ctx.shadowBlur = 6;
+        ctx.fillRect(bx, by, bw * hpPct, bh);
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = "#ffffff44"; ctx.lineWidth = 0.5;
+        ctx.strokeRect(bx, by, bw, bh);
+        ctx.globalAlpha = 1;
       }
       // シールドリング
       const shieldA=(hitAccRef.current.weight===0)?0.5:0.2;
@@ -2783,8 +2915,8 @@ const DanmakuShooter = React.memo(({
     }
     return [...set];
   },[enemySetup]);
-  const ATKLABELS={single:"単発",burst:"連射",scatter:"ばら撒き",laser_line:"直線ﾚｰｻﾞｰ",laser_rotate:"回転ﾚｰｻﾞｰ",laser_cross:"交差ﾚｰｻﾞｰ",laser_cross_rnd:"乱交差",radial:"全方位",oneshot:"一撃死"};
-  const ATKCOLORS={single:"#ff6688",burst:"#ff9922",scatter:"#ff44aa",laser_line:"#ff00ff",laser_rotate:"#00ffff",laser_cross:"#ffff44",laser_cross_rnd:"#ff8844",radial:"#44ffff",oneshot:"#ffffff"};
+  const ATKLABELS={single:"単発",burst:"連射",scatter:"ばら撒き",laser_line:"直線ﾚｰｻﾞｰ",laser_rotate:"回転ﾚｰｻﾞｰ",laser_cross:"交差ﾚｰｻﾞｰ",laser_cross_rnd:"乱交差",laser_grid:"格子ﾚｰｻﾞｰ",laser_area:"ｴﾘｱ砲撃",radial:"全方位",oneshot:"一撃死"};
+  const ATKCOLORS={single:"#ff6688",burst:"#ff9922",scatter:"#ff44aa",laser_line:"#ff00ff",laser_rotate:"#00ffff",laser_cross:"#ffff44",laser_cross_rnd:"#ff8844",laser_grid:"#00ff88",laser_area:"#ff2200",radial:"#44ffff",oneshot:"#ffffff"};
 
   return (
     <div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(2,10,20,0.97)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"stretch",justifyContent:"flex-start",animation:"fadeIn 0.15s ease",borderRight:"2px solid "+C.accent+"44",overflow:"hidden"}}>
@@ -4993,6 +5125,62 @@ export default function ArcadiaCh2() {
   // ── ヒットスプライトアニメーション（Attack00 連番PNG）────────────────────────
   // hitSprites: [{ id, slotIdx, frame }]  frame: 0→1→2 (12fps, 0.25s = 3frames)
   const [hitSprites, setHitSprites] = useState([]);
+
+  // ── デバッグ：コマンド選択画面から直接シューティングへ飛ぶ ─────────────────
+  // debugDanmakuActive: trueのとき select 画面にオーバーレイ表示
+  const [debugDanmakuActive,    setDebugDanmakuActive   ] = useState(false);
+  const [debugDanmakuPhase,     setDebugDanmakuPhase    ] = useState("select"); // "select" | "result"
+  const [debugDanmakuSuccess,   setDebugDanmakuSuccess  ] = useState(false);
+  const [debugDanmakuActionId,  setDebugDanmakuActionId ] = useState("atk");
+  const [debugDanmakuKey,       setDebugDanmakuKey      ] = useState(0); // 再マウント用
+  // デバッグ用に使用する actionId 一覧（ACTION_ENEMY_SETUP のキー）
+  const DEBUG_DANMAKU_ACTIONS = Object.keys(ACTION_ENEMY_SETUP);
+
+  // ── 難易度スコア計算（コンポーネントスコープ・オーバーレイUIでも使用） ─────
+  const BULLET_WEIGHTS_DEBUG = {
+    single: 1, burst: 1, scatter: 1, radial: 1,
+    laser_line: 5, laser_rotate: 5, laser_cross: 5,
+    laser_cross_rnd: 5, laser_grid: 5, laser_area: 8, oneshot: 10,
+  };
+  const calcDanmakuScore = useCallback((actionId) => {
+    const setup = ACTION_ENEMY_SETUP[actionId] ?? ACTION_ENEMY_DEFAULT;
+    let score = 0;
+    for (const group of setup) {
+      const td = ENEMY_TYPES[group.type] ?? ENEMY_TYPES["box"];
+      const avgWeight = td.attackSeq.reduce((s, bt) => s + (BULLET_WEIGHTS_DEBUG[bt] ?? 1), 0)
+                      / td.attackSeq.length;
+      const freqFactor = 100 / Math.max(td.shootBase, 1);
+      const spdFactor  = td.spd;
+      score += group.count * avgWeight * freqFactor * spdFactor;
+    }
+    return score;
+  }, []);
+
+  // 全パターンのスコアをキャッシュ（ソート済み）
+  const DEBUG_PATTERN_SCORES = useMemo(() => {
+    return Object.keys(ACTION_ENEMY_SETUP).map(aid => ({
+      aid,
+      score: calcDanmakuScore(aid),
+      setup: ACTION_ENEMY_SETUP[aid],
+    })).sort((a, b) => b.score - a.score);
+  }, [calcDanmakuScore]);
+
+  // 最大スコア（バーの正規化用）
+  const DEBUG_MAX_SCORE = useMemo(() =>
+    Math.max(...DEBUG_PATTERN_SCORES.map(p => p.score), 1),
+  [DEBUG_PATTERN_SCORES]);
+  // デバッグシューターを開く（label: ヘッダーに表示するソース情報）
+  const [debugDanmakuLabel, setDebugDanmakuLabel] = useState("");
+  const openDebugDanmaku = useCallback((actionId, label) => {
+    const aid = actionId ?? "atk";
+    setDebugDanmakuActionId(aid);
+    setDebugDanmakuLabel(label ?? aid);
+    setDebugDanmakuPhase("select");
+    setDebugDanmakuSuccess(false);
+    setDebugDanmakuKey(k => k + 1);
+    setDebugDanmakuActive(true);
+  }, []);
+
   const HIT_SPRITE_URLS = [
     "https://superapolon.github.io/Arcadia_Assets/Animation/playerskill/Attack00/Eff_Attack00_1.png",
     "https://superapolon.github.io/Arcadia_Assets/Animation/playerskill/Attack00/Eff_Attack00_2.png",
@@ -7751,6 +7939,52 @@ export default function ArcadiaCh2() {
     setPendingRhythmExecution(null);
     setPendingExecution({ mode:"multi", cmds:stunCmds, targets:stunTgts, rhythmResultsSnapshot: null });
   }, [playerStunActive, inputPhase, victory, defeat, multiEnemies]);
+  // ── デバッグ：バトルのコマンド選択中に「-」キー → シューティング直接起動 ──
+  // 全生存敵の現在ターンの攻撃パターンから「最も難しい」ものを選んで起動する
+  React.useEffect(() => {
+    const onKeyDown = (e) => {
+      const isMinus = e.code === "Minus" || e.key === "-" || e.key === "Minus";
+      if (!isMinus) return;
+      if (phase !== "battle") return;
+      if (inputPhase !== "command") return;
+      if (victory || defeat) return;
+      e.preventDefault();
+      if (debugDanmakuActive) { setDebugDanmakuActive(false); return; }
+
+      // ── 全生存敵の現在 actionId を収集 ──────────────────────────────────
+      let candidateActions = [];
+      if (multiEnemies && multiEnemies.length > 0) {
+        multiEnemies.forEach(e => {
+          if (e.defeated) return;
+          const aid = e.def.pattern[e.turnIdx % e.def.pattern.length];
+          candidateActions.push(aid);
+        });
+      } else if (battleEnemy) {
+        // 単体バトル
+        const aid = battleEnemy.pattern
+          ? battleEnemy.pattern[0]   // 単体はenemyNextActionを参照
+          : "atk";
+        candidateActions.push(aid);
+      }
+      if (candidateActions.length === 0) candidateActions = ["atk"];
+
+      // 最高スコアの actionId を選択（calcDanmakuScore はコンポーネントスコープ）
+      let bestAction = candidateActions[0];
+      let bestScore  = -1;
+      for (const aid of candidateActions) {
+        const s = calcDanmakuScore(aid);
+        if (s > bestScore) { bestScore = s; bestAction = aid; }
+      }
+
+      // ラベル：全敵のパターン一覧＋選択理由
+      const allScores = candidateActions.map(aid => `${aid}(${calcDanmakuScore(aid).toFixed(1)})`).join(" / ");
+      const label = `最難: ${bestAction} [${allScores}]`;
+      openDebugDanmaku(bestAction, label);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [phase, inputPhase, victory, defeat, debugDanmakuActive, multiEnemies, battleEnemy, openDebugDanmaku]);
+
   // @@SECTION:BATTLE_SKIP_KEY ───────────────────────────────────────────────────
   // + キー：1ターン丸ごとスキップ（プレイヤー・敵ともに行動なし）
   // ・全生存敵の turnIdx を +1
@@ -8466,6 +8700,7 @@ export default function ArcadiaCh2() {
     };
 
     return (
+      <>
       <FullScreenPage background="linear-gradient(180deg,#020810 0%,#050d14 50%,#0a1828 100%)" center style={{fontFamily:FONT_SERIF,overflow:"hidden"}}>
         <style>{keyframes}</style>
         <ScanlineOverlay />
@@ -8536,8 +8771,15 @@ export default function ArcadiaCh2() {
             hoverStyle={{color:C.text,borderColor:C.muted}}>
             ← タイトルへ戻る
           </HoverButton>
+
+          {/* ─ デバッグヒント ─ */}
+          <div style={{marginTop:18,fontSize:9,color:C.muted,fontFamily:FONT_MONO,letterSpacing:2,opacity:0.5}}>
+            [ - ] DEBUG: DANMAKU SHOOTER（バトル画面のコマンド選択中）
+          </div>
         </div>
+
       </FullScreenPage>
+      </>
     );
   }
 
@@ -8911,6 +9153,7 @@ export default function ArcadiaCh2() {
     const effectiveEnemySpdDisp = Math.max(1, 12 - (enemySpdDebuff > 0 ? 5 : 0));
 
     return (
+      <>
       <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",background:battleBg,fontFamily:FONT_SERIF,userSelect:"none",overflow:"hidden",
         animation: lightningAnimFrame !== null
           ? "lightningShake 0.08s linear infinite"
@@ -10307,6 +10550,207 @@ export default function ArcadiaCh2() {
           </div>
         </div>
       </div>
+
+      {/* ── デバッグ：弾幕シューティングオーバーレイ（コマンド選択中 - キー） ── */}
+      {debugDanmakuActive && (() => {
+        const debugInfo = {
+          enemyIcon: "🐛",
+          enemyName: "DEBUG ENEMY",
+          actionId:  debugDanmakuActionId,
+          isAll:     debugDanmakuActionId.endsWith("_all") || debugDanmakuActionId === "atk_all",
+          queueCount: 1,
+        };
+        const debugActionLabel = { icon: "⚔", text: debugDanmakuActionId };
+        // 今のバトルで登場している敵の actionId セット（ハイライト用）
+        const liveActionIds = new Set(
+          (multiEnemies ?? []).filter(e => !e.defeated)
+            .map(e => e.def.pattern[e.turnIdx % e.def.pattern.length])
+        );
+        return (
+          <div style={{
+            position:"fixed", inset:0, zIndex:9999,
+            background:"rgba(2,8,16,0.97)",
+            backdropFilter:"blur(8px)",
+            display:"flex", flexDirection:"row",
+            alignItems:"stretch", justifyContent:"center",
+            fontFamily:FONT_MONO,
+          }}>
+
+            {/* ── 左ペイン：難易度比較テーブル ── */}
+            <div style={{
+              width:260, flexShrink:0,
+              display:"flex", flexDirection:"column",
+              borderRight:`1px solid ${C.border}`,
+              overflow:"hidden",
+            }}>
+              {/* テーブルヘッダー */}
+              <div style={{
+                padding:"9px 14px 7px",
+                borderBottom:`1px solid ${C.accent}33`,
+                flexShrink:0,
+              }}>
+                <div style={{fontSize:9,letterSpacing:4,color:C.accent,marginBottom:2}}>🐛 DEBUG -- PATTERN SELECT</div>
+                {debugDanmakuLabel && (
+                  <div style={{fontSize:8,color:C.muted,letterSpacing:1,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+                    {debugDanmakuLabel}
+                  </div>
+                )}
+              </div>
+              {/* カラムラベル */}
+              <div style={{
+                display:"grid", gridTemplateColumns:"1fr 56px 52px",
+                padding:"4px 14px", borderBottom:`1px solid ${C.border}`,
+                flexShrink:0,
+              }}>
+                <span style={{fontSize:8,color:C.muted,letterSpacing:2}}>PATTERN</span>
+                <span style={{fontSize:8,color:C.muted,letterSpacing:1,textAlign:"right"}}>SCORE</span>
+                <span style={{fontSize:8,color:C.muted,letterSpacing:1,textAlign:"right"}}>RANK</span>
+              </div>
+              {/* スクロールリスト */}
+              <div style={{flex:1,overflowY:"auto"}}>
+                {DEBUG_PATTERN_SCORES.map((p, i) => {
+                  const isSelected  = p.aid === debugDanmakuActionId;
+                  const isLive      = liveActionIds.has(p.aid);
+                  const barPct      = (p.score / DEBUG_MAX_SCORE) * 100;
+                  // 難易度カラー：スコアに応じてグラデーション
+                  const rankColor   = barPct > 75 ? "#ff4466"
+                                    : barPct > 50 ? "#ff9922"
+                                    : barPct > 25 ? "#f0c040"
+                                    : C.muted;
+                  const rankLabel   = barPct > 75 ? "★★★"
+                                    : barPct > 50 ? "★★"
+                                    : barPct > 25 ? "★"
+                                    : "─";
+                  return (
+                    <div
+                      key={p.aid}
+                      onClick={() => openDebugDanmaku(p.aid)}
+                      style={{
+                        position:"relative",
+                        padding:"5px 14px",
+                        borderBottom:`1px solid ${C.border}22`,
+                        cursor:"pointer",
+                        background: isSelected
+                          ? `${C.accent}18`
+                          : isLive ? `${C.gold}0d` : "transparent",
+                        borderLeft: isSelected
+                          ? `3px solid ${C.accent}`
+                          : isLive ? `3px solid ${C.gold}`
+                          : "3px solid transparent",
+                        transition:"background 0.1s",
+                      }}
+                    >
+                      {/* スコアバー（背景） */}
+                      <div style={{
+                        position:"absolute", left:0, top:0, bottom:0,
+                        width:`${barPct}%`,
+                        background: isSelected ? `${C.accent}12` : `${rankColor}0a`,
+                        pointerEvents:"none",
+                      }}/>
+                      {/* コンテンツ */}
+                      <div style={{
+                        position:"relative",
+                        display:"grid", gridTemplateColumns:"1fr 56px 52px",
+                        alignItems:"center",
+                      }}>
+                        <div>
+                          <span style={{
+                            fontSize:9, letterSpacing:1,
+                            color: isSelected ? C.accent : isLive ? C.gold : C.text,
+                            fontWeight: isSelected || isLive ? "bold" : "normal",
+                          }}>{p.aid}</span>
+                          {isLive && (
+                            <span style={{fontSize:7,color:C.gold,marginLeft:5,letterSpacing:1}}>
+                              ◀NOW
+                            </span>
+                          )}
+                        </div>
+                        <div style={{textAlign:"right",fontSize:9,color:rankColor,letterSpacing:0.5}}>
+                          {p.score.toFixed(1)}
+                        </div>
+                        <div style={{textAlign:"right",fontSize:9,color:rankColor}}>
+                          {rankLabel}
+                        </div>
+                      </div>
+                      {/* 敵タイプ内訳（小字） */}
+                      <div style={{position:"relative",fontSize:7,color:C.muted,marginTop:2,letterSpacing:0.5}}>
+                        {p.setup.map(g => `${g.type}×${g.count}`).join("  ")}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* フッター操作ガイド */}
+              <div style={{
+                padding:"6px 14px", borderTop:`1px solid ${C.border}`,
+                flexShrink:0, fontSize:8, color:C.muted, letterSpacing:1, lineHeight:1.8,
+              }}>
+                クリック → パターン切替<br/>
+                ◀NOW → 現在のバトル敵<br/>
+                [-] → 閉じる
+              </div>
+            </div>
+
+            {/* ── 右ペイン：シューター本体 ── */}
+            <div style={{
+              flex:1, display:"flex", flexDirection:"column",
+              alignItems:"stretch", minWidth:0,
+            }}>
+              {/* 右ペインヘッダー */}
+              <div style={{
+                display:"flex", alignItems:"center", justifyContent:"space-between",
+                padding:"9px 16px 7px",
+                borderBottom:`1px solid ${C.accent}33`,
+                flexShrink:0,
+              }}>
+                <div style={{fontSize:10,letterSpacing:3,color:C.accent}}>
+                  ⚔ {debugDanmakuActionId}
+                  <span style={{
+                    marginLeft:12, fontSize:9, letterSpacing:1,
+                    color: (() => {
+                      const pct = (calcDanmakuScore(debugDanmakuActionId) / DEBUG_MAX_SCORE) * 100;
+                      return pct > 75 ? "#ff4466" : pct > 50 ? "#ff9922" : pct > 25 ? "#f0c040" : C.muted;
+                    })(),
+                  }}>
+                    SCORE {calcDanmakuScore(debugDanmakuActionId).toFixed(1)}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setDebugDanmakuActive(false)}
+                  style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,fontFamily:FONT_MONO,fontSize:9,letterSpacing:2,cursor:"pointer",padding:"3px 10px",borderRadius:2}}
+                >[-] CLOSE</button>
+              </div>
+              {/* シューター */}
+              <div style={{flex:1, position:"relative", minHeight:0}}>
+                <DanmakuShooter
+                  key={`debug_${debugDanmakuActionId}_${debugDanmakuKey}`}
+                  info={debugInfo}
+                  actionLabel={debugActionLabel}
+                  isAll={debugInfo.isAll}
+                  targetLabel={null}
+                  hp={hp} mhp={mhp}
+                  remaining={0}
+                  partyCount={currentPartyKeys.length}
+                  phase={debugDanmakuPhase}
+                  success={debugDanmakuSuccess}
+                  timeLimit={20}
+                  onComplete={(result) => {
+                    setDebugDanmakuSuccess(result?.noDamage ?? false);
+                    setDebugDanmakuPhase("result");
+                    setTimeout(() => {
+                      setDebugDanmakuPhase("select");
+                      setDebugDanmakuSuccess(false);
+                      setDebugDanmakuKey(k => k + 1);
+                    }, 2000);
+                  }}
+                  C={C}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      </>
     );
   }
 
