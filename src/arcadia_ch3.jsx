@@ -1138,7 +1138,7 @@ const SKILL_DEFS = {
     label:"テンタクルスバイト", icon:"⚔", color:"#c084fc", cost:12, cooldown:2,
     isPrephase:true, isEndphase:false,
     dmgType:"physical", baseDmg:[20,23], weaponMult:true, atkMult:true, dmgMult:1.2,
-    hits:10, target:"single", element:null, pierceCounter:true, comboBonus:1.0,
+    hits:10, target:"single", element:null, pierceCounter:true, comboBonus:1.2,
     healFlat:0, healTarget:"self",
     enemyStun:0, enemyForceAction:null, enemyForceActionTurns:0,
     enemyDebuff:null, selfBuff:null, enrageBreak:false,
@@ -1157,10 +1157,10 @@ const SKILL_DEFS = {
   },
 
   flat_strike: {
-    label:"フラットストライク", icon:"⚔", color:"#94a3b8", cost:0, cooldown:1,
+    label:"フラットストライク", icon:"⚔", color:"#94a3b8", cost:0, cooldown:0,
     isPrephase:false, isEndphase:false,
     dmgType:"physical", baseDmg:[18,24], weaponMult:true, atkMult:true, dmgMult:1.0,
-    hits:1, target:"single", element:null, pierceCounter:false, comboBonus:1.0,
+    hits:2, target:"single", element:null, pierceCounter:false, comboBonus:1.0,
     healFlat:0, healTarget:"self",
     enemyStun:0, enemyForceAction:null, enemyForceActionTurns:0,
     enemyDebuff:null, selfBuff:null, enrageBreak:false,
@@ -1201,7 +1201,7 @@ const SKILL_DEFS = {
   },
 
   deep_edge: {
-    label:"ディープエッジ", icon:"⚔", color:"#f472b6", cost:0, cooldown:4,
+    label:"ディープエッジ", icon:"⚔", color:"#f472b6", cost:0, cooldown:0,
     isPrephase:false, isEndphase:true,
     dmgType:"fixed", baseDmg:[55,60], weaponMult:true, atkMult:true, dmgMult:1.0,
     hits:1, target:"single", element:null, pierceCounter:false, comboBonus:1.0,
@@ -1592,9 +1592,9 @@ const ALL_CHAR_DEFS = {
   swift:   { id:"swift",   name:"スウィフト", icon:"\u{1F9D1}\u200D\u{1F9B1}",     spd:18, mhp:125, mmp:105,  atk:15,  def:10,  skills:["atk","dodge","takedown","windmill","elem_fire","slow_blade"] },
   linz:    { id:"linz",    name:"リンス",    icon:"\u{1F469}",                     spd:11, mhp:122, mmp:100,  atk:10,  def:10,  skills:["atk","dodge","overheal","trick_attack","arrow_rain"] },
   chopper: { id:"chopper", name:"チョッパー", icon:"\u{1F466}",                     spd:9,  mhp:110,  mmp:90,  atk:5,  def:8,  skills:["atk","dodge","elem_fire","elem_earth"] },
-  aries:   { id:"aries",   name:"アリエス",  icon:"\u{1F30A}",                     spd:13, mhp:125, mmp:105,  atk:10,  def:10,  skills:["atk","dodge","water_sphere"] },
-  karma:   { id:"karma",   name:"カルマ",    icon:"\u{1F61C}",                     spd:16, mhp:115, mmp:95,  atk:0,  def:0,  skills:["atk","dodge","provoke"] },
-  frank:   { id:"frank",   name:"フランク",  icon:"\u{1F917}",                     spd:10, mhp:240, mmp:180,  atk:30,  def:36, skills:["atk",,"dodge","provoke","takedown"] },
+  aries:   { id:"aries",   name:"アリエス",  icon:"\u{1F30A}",                     spd:13, mhp:125, mmp:105,  atk:10,  def:10,  skills:["atk","dodge","fireball","water_sphere","stone_blitz"] },
+  karma:   { id:"karma",   name:"カルマ",    icon:"\u{1F61C}",                     spd:16, mhp:115, mmp:95,  atk:0,  def:0,  skills:["atk","dodge","provoke","flat_strike"] },
+  frank:   { id:"frank",   name:"フランク",  icon:"\u{1F917}",                     spd:10, mhp:240, mmp:180,  atk:30,  def:36, skills:["atk",,"dodge","provoke","takedown","deep_edge"] },
   will:    { id:"will",    name:"ウィル",    icon:"\u{1F624}",                     spd:18, mhp:99,  mmp:88,  atk:10,  def:5,  skills:["atk","dodge","elem_thunder","elem_earth"] },
   ponkiti: { id:"ponkiti", name:"ポンキチ",  icon:"\u{1F929}",                     spd:17, mhp:135, mmp:95,  atk:16,  def:3,  skills:["atk","dodge","ten_bite","thunderbolt"] },
   persia:  { id:"persia",  name:"ペルシア",  icon:"\u{1F338}",                     spd:14, mhp:130, mmp:100,  atk:16,  def:5,  skills:["atk","dodge","straight_shot","arrow_rain"] },
