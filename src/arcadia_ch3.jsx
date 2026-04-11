@@ -6632,6 +6632,9 @@ export default function ArcadiaCh2() {
     const pendingDefeatFx = []; // { slotIdx }
     // 回避判定キュー（敵が攻撃するたびにここに積む、フェーズ完了後UIへ渡す）
     const pendingDodgeQueue = []; // { memberId, allTargets, collision, attackKey, attackInfo, targetLabel, applyDamage }
+    // リズム貫通/クリティカルでカウンターを突き破ったメンバー（敵の反撃を抑制）
+    // キー形式: "${memberId}_${tIdx}"
+    const pierceCounterMembers = new Set();
 
     logSys(`─ ターン ${turn + 1} ─`);
     setcurrentBattleTotalTurns(prev => prev + 1);
@@ -6922,8 +6925,43 @@ export default function ArcadiaCh2() {
             ? tDef.def.pattern[tDef.turnIdx % tDef.def.pattern.length]
             : eAction; // 単体バトルはターン冒頭で決定済みの eAction を使用
         
-          // atk vs 敵counter → 敵ターン側（eAction==="counter"ブロック）で一括処理するためここではスキップ
+          // atk vs 敵counter → リズム判定でpierceCounter/criticalならそのままダメージ、それ以外はスキップ
           if (skillId === "atk" && eActionForJudge === "counter" && !sk_def.pierceCounter) {
+            const _atkRhy = rhythmForMember(actor.id);
+            const _atkPierce = _atkRhy.pierceCounter || _atkRhy.critical;
+            if (!_atkPierce) {
+              continue; // 通常強攻はカウンターにスキップ（敵ターン側で反撃処理）
+            }
+            // ── リズム貫通（80%以上）またはクリティカル（100%）：カウンターを無効化してダメージ ──
+            if (_atkRhy.pct < 50) {
+              logMain(`${actor.icon}${actor.name} ⚔強攻 → ✗MISS（${_atkRhy.pct}%）`);
+              skillsUsedThisTurn.set(skillId, actor.id);
+              continue;
+            }
+            const _atkDmgMult = _atkRhy.critical ? 2.0 : 1.0;
+            const _atkSfx = _atkRhy.critical ? " ✦CRIT BREAK！カウンターを粉砕！" : " ◎貫通！カウンターを突き破った！";
+            const tEnemyDefPierce = tDef ? tDef.def : null;
+            const pierceAtkBonus2 = actor.id === "eltz" ? atkBonus : (ALL_CHAR_DEFS[actor.id]?.atk ?? 0);
+            const weaponType2 = actor.id === "eltz" ? (equippedWeapon?.weaponType ?? "none") : "none";
+            const { totalDmg: pierceTotalDmg } = resolveSkillDamage({
+              skillId: "atk", atkBonus: pierceAtkBonus2, weaponType: weaponType2,
+              comboMult: comboAtkMult * _atkDmgMult,
+              targetDef: 0, targetMagDef: tEnemyDefPierce?.mdef ?? 0,
+              isStunned: isTargetStunned,
+            });
+            const pierceFinalDmg = Math.max(1, pierceTotalDmg);
+            // slotIdxは tDef.slot（スロット番号）を使う（tIdx は配列インデックスで別物）
+            const pierceEnemySlot = tDef ? tDef.slot : tIdx;
+            if (tDef) {
+              curEnemies[tIdx].hp = Math.max(0, tDef.hp - pierceFinalDmg);
+              if (curEnemies[tIdx].hp <= 0) { curEnemies[tIdx].defeated = true; pendingDefeatFx.push({ slotIdx: pierceEnemySlot }); }
+              pendingHitFx.push({ slotIdx: pierceEnemySlot, dmg: pierceFinalDmg, type: "normal" });
+            }
+            const tEmNameP = tDef ? `${tDef.def.em}${tDef.def.name}` : "???";
+            logMain(`${actor.icon}${actor.name} ⚔強攻${_atkSfx} → ${tEmNameP} ${pierceFinalDmg}ダメージ！`);
+            skillsUsedThisTurn.set(skillId, actor.id);
+            // 敵ターン側でこのメンバーへの反撃を抑制するフラグをセット（キー: memberId_enemySlot）
+            pierceCounterMembers.add(`${actor.id}_${pierceEnemySlot}`);
             continue;
           }
         
@@ -7127,6 +7165,13 @@ export default function ArcadiaCh2() {
                 if (cmds[k] !== "atk") continue;
                 // この敵（slot）をターゲットにしていないメンバーはスキップ
                 if ((targets[k] ?? 0) !== slot) continue;
+                // リズム貫通/クリティカルで既にカウンターを突き破ったメンバーはスキップ（反撃なし）
+                if (pierceCounterMembers.has(`${k}_${slot}`)) {
+                  const m2 = PARTY_DEFS.find(p => p.id === k);
+                  logMain(`${e.def.em}${e.def.name} 🔄 カウンター！ → ${m2?.icon ?? ""}${m2?.name ?? k} の貫通攻撃に相殺された！反撃無効！`);
+                  anyAtk = true;
+                  continue;
+                }
                 anyAtk = true;
                 const m = PARTY_DEFS.find(p => p.id === k);
                 const baseRaw = randInt(e.def.atk[0], e.def.atk[1]) + Math.floor(e.def.atk[1] * 0.3);
@@ -7518,8 +7563,16 @@ export default function ArcadiaCh2() {
       // 回避結果を元に各攻撃のダメージ適用クロージャを実行
       for (const entry of pendingDodgeQueue) {
         if (dmgMult === 0) {
-          // 全回避：全員回避成功フラグをセット（dodged=trueになる）
-          entry.applyDamage(resultMap);
+          // 全回避：全員の attackKey_memberId を true（回避成功）にセットしてから applyDamage を呼ぶ
+          const noDmgMap = { ...resultMap, __dmgMult__: 0 };
+          if (entry.memberId === "all") {
+            (entry.allTargets ?? []).forEach(id => {
+              noDmgMap[entry.attackKey + "_" + id] = true;
+            });
+          } else {
+            noDmgMap[entry.attackKey + "_" + entry.memberId] = true;
+          }
+          entry.applyDamage(noDmgMap);
         } else {
           // 被弾あり：一時的に結果を"hit"にして applyDamage を呼び、
           // ダメージに dmgMult を適用するため resultMap を上書きしてから呼ぶ
@@ -7570,7 +7623,10 @@ export default function ArcadiaCh2() {
     // いずれかのメンバーがhealを使用したか
     const healUsedThisTurn = currentPartyKeys.some(k => (memberHeal[k] ?? 0) > 0);
     let comboOk;
-    if (overhealUsed) {
+    // ノーミス（シューティングで完全回避）の場合は無条件でコンボ成立・ダメージ0
+    if (dmgMult === 0 && pendingDodgeQueue.length > 0) {
+      comboOk = true;
+    } else if (overhealUsed) {
       // オーバーヒールターン：メンバー全員の被ダメ ≤ 回復量か確認（従来仕様維持）
       comboOk = currentPartyKeys.every(k => (memberDmg[k] ?? 0) <= OVERHEAL_AMT);
       if (!comboOk) {
