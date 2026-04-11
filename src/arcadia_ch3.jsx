@@ -761,7 +761,7 @@ const INITIAL_BATTLE_DEFS = {
     name:"マンドラゴラ", em:"🌿",
     maxHp:50, atk:[8,14], elk:57, exp:35, lv:4, spd:1,pdef:999, mdef:0,
     bg:["#0a1808","#184018","#203020"], isFloating:false, isGround:true,
-    pattern:["counter","counter","heal","dodge","dodge","heal"],
+    pattern:["water_sphere","counter","heal","air_cutter","dodge","heal"],
     elementCycle:["ice"],
   },
 
@@ -789,7 +789,7 @@ const INITIAL_BATTLE_DEFS = {
     name:"ケヴィン", em:"🧔",
     maxHp:180, atk:[13,15], elk:0, exp:0, lv:8, spd:13,pdef:5, mdef:0,
     bg:["#0a1206","#1a2a0a","#100e04"], isBoss:false, isFloating:false, isGround:true,
-    pattern:["atk","atk","counter","dodge","atk","counter","atk"],
+    pattern:["atk","fireball","counter","dodge","biker_slash","counter","atk"],
     unavoidableAtk:[0,0],
     elementCycle:["earth"],
   },
@@ -798,7 +798,7 @@ const INITIAL_BATTLE_DEFS = {
     name:"チョッパー", em:"👦",
     maxHp:100, atk:[8,9], elk:0, exp:0, lv:3, spd:16,pdef:8, mdef:0,
     bg:["#0a1206","#1a2a0a","#100e04"], isBoss:false, isFloating:false, isGround:true,
-    pattern:["atk","dodge","atk","atk","counter","atk"],
+    pattern:["atk","dodge","atk","takedown","counter","atk"],
     unavoidableAtk:[0,0],
     elementCycle:["fire"],
   },
@@ -2195,8 +2195,9 @@ const ACTION_ENEMY_SETUP = {
   LightningSlash:[{ type:"radial_e2",count:1 },{ type:"radial_e",count:3 },{ type:"box",     count:4 },{ type:"laser_e", count:1 },{ type:"laser_area", count:1 }],
   reverse:     [{ type:"laser_e", count:8 }],
   takedown:    [{ type:"bigbox",  count:5 }],
+  biker_slash:  [{ type:"bigbox",  count:3 },{ type:"cross_e", count:1 }],
 };
-const ACTION_ENEMY_DEFAULT = [{ type:"box", count:2 }];
+const ACTION_ENEMY_DEFAULT = [{ type:"box", count:2 },{ type:"tri", count:1 }];
 
 // ─── レーザー腕の長さ設定（ピクセル）─────────────────────────────────────────
 const LASER_LEN_ROTATE    = 240;  // 回転レーザー（laser_rotate）の腕の長さ
