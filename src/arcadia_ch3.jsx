@@ -89,6 +89,253 @@ const ScanlineOverlay = ({ color = "rgba(0,200,255,0.012)", zIndex, style = {} }
 );
 
 /**
+ * 弾幕カットシーンオーバーレイ
+ * フルスクリーン固定・タイマー自動進行・入場時シェイク＋フラッシュアニメーション
+ * props: src, durationMs, onDone, phase
+ */
+const DanmakuCutsceneOverlay = ({ src, durationMs, onDone, phase }) => {
+  const [shaking,   setShaking  ] = useState(true);
+  const [flashing,  setFlashing ] = useState(true);
+  const [progress,  setProgress ] = useState(0);
+  // slide state: "in" → "hold" → "out"
+  const [slideState, setSlideState] = useState("in");
+
+  // スライド方向：pre1=右から、pre2=左から、postSuccess=下から
+  const SLIDE_DIR = {
+    pre1:        "fromRight",
+    pre2:        "fromLeft",
+    postSuccess: "fromBottom",
+  };
+  const dir = SLIDE_DIR[phase] ?? "fromRight";
+
+  const SLIDE_IN_MS  = 180;
+  const SLIDE_OUT_MS = 160;
+  const holdMs = Math.max(durationMs - SLIDE_IN_MS - SLIDE_OUT_MS, 60);
+
+  // マウント時にスライドイン → ホールド → スライドアウト → onDone
+  useEffect(() => {
+    setSlideState("in");
+    setShaking(true);
+    setFlashing(true);
+    const t1 = setTimeout(() => setFlashing(false), 120);
+    const t2 = setTimeout(() => setShaking(false),  Math.min(420, durationMs * 0.5));
+    const t3 = setTimeout(() => setSlideState("hold"), SLIDE_IN_MS);
+    const t4 = setTimeout(() => setSlideState("out"),  SLIDE_IN_MS + holdMs);
+    const t5 = setTimeout(() => onDone(), SLIDE_IN_MS + holdMs + SLIDE_OUT_MS);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); clearTimeout(t5); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
+  // プログレスバー更新
+  useEffect(() => {
+    setProgress(0);
+    const start = performance.now();
+    const total = durationMs;
+    let raf;
+    const tick = (now) => {
+      const elapsed = now - start;
+      setProgress(Math.min(elapsed / total, 1));
+      if (elapsed < total) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [src, durationMs]);
+
+  const shakeStyle = shaking ? { animation: "danmakuCsShake 0.08s linear infinite" } : {};
+  const isSuccess  = phase === "postSuccess";
+  const barColor   = isSuccess ? "#00ffcc" : "#ff4466";
+  const glowColor  = isSuccess ? "rgba(0,255,204,0.35)" : "rgba(255,68,102,0.35)";
+
+  // スライドアニメーション定義
+  const slideInAnim = {
+    fromRight:  "danmakuSlideInRight",
+    fromLeft:   "danmakuSlideInLeft",
+    fromBottom: "danmakuSlideInBottom",
+  }[dir];
+  const slideOutAnim = {
+    fromRight:  "danmakuSlideOutLeft",
+    fromLeft:   "danmakuSlideOutRight",
+    fromBottom: "danmakuSlideOutTop",
+  }[dir];
+
+  const imgAnim =
+    slideState === "in"   ? `${slideInAnim}  ${SLIDE_IN_MS}ms cubic-bezier(0.22,1,0.36,1) both` :
+    slideState === "out"  ? `${slideOutAnim} ${SLIDE_OUT_MS}ms cubic-bezier(0.55,0,1,0.45) both` :
+    "none";
+
+  // 衝撃ライン（pre1/pre2 のみ）
+  const showImpact = !isSuccess && slideState !== "out";
+
+  return (
+    <>
+      <style>{`
+        @keyframes danmakuCsShake {
+          0%   { transform: translate(-4px, -2px) rotate(-0.5deg); }
+          20%  { transform: translate( 5px,  3px) rotate( 0.7deg); }
+          40%  { transform: translate(-3px,  4px) rotate(-0.4deg); }
+          60%  { transform: translate( 4px, -3px) rotate( 0.6deg); }
+          80%  { transform: translate(-5px,  2px) rotate(-0.8deg); }
+          100% { transform: translate( 3px, -4px) rotate( 0.5deg); }
+        }
+        /* スライドイン */
+        @keyframes danmakuSlideInRight {
+          from { transform: translateX(110%) skewX(-6deg); opacity:0.6; }
+          to   { transform: translateX(0%)   skewX(0deg);  opacity:1; }
+        }
+        @keyframes danmakuSlideInLeft {
+          from { transform: translateX(-110%) skewX(6deg); opacity:0.6; }
+          to   { transform: translateX(0%)    skewX(0deg); opacity:1; }
+        }
+        @keyframes danmakuSlideInBottom {
+          from { transform: translateY(80%) scale(0.9); opacity:0.5; }
+          to   { transform: translateY(0%)  scale(1);   opacity:1; }
+        }
+        /* スライドアウト */
+        @keyframes danmakuSlideOutLeft {
+          from { transform: translateX(0%)    skewX(0deg);  opacity:1; }
+          to   { transform: translateX(-110%) skewX(-8deg); opacity:0; }
+        }
+        @keyframes danmakuSlideOutRight {
+          from { transform: translateX(0%)   skewX(0deg); opacity:1; }
+          to   { transform: translateX(110%) skewX(8deg); opacity:0; }
+        }
+        @keyframes danmakuSlideOutTop {
+          from { transform: translateY(0%)   scale(1);   opacity:1; }
+          to   { transform: translateY(-80%) scale(0.9); opacity:0; }
+        }
+        /* 衝撃ライン */
+        @keyframes danmakuImpactLine {
+          0%   { opacity:0.9; transform: scaleX(0.3); }
+          40%  { opacity:0.7; transform: scaleX(1.0); }
+          100% { opacity:0;   transform: scaleX(1.2); }
+        }
+        /* フレーム点滅 */
+        @keyframes danmakuFrameBlink {
+          0%,100% { opacity:1; }
+          50%     { opacity:0.5; }
+        }
+      `}</style>
+
+      {/* フラッシュ（白） */}
+      {flashing && (
+        <div style={{
+          position:"fixed", inset:0, zIndex:200,
+          background:"#fff", pointerEvents:"none", opacity:0.85,
+        }} />
+      )}
+
+      {/* メインオーバーレイ */}
+      <div style={{
+        position:"fixed", inset:0, zIndex:190,
+        background:"radial-gradient(ellipse at center, #0a0a14 0%, #000 100%)",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        overflow:"hidden",
+      }}>
+        {/* 画像ラッパー（スライドアニメーション） */}
+        <div style={{
+          position:"relative",
+          width:"100%", height:"100%",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          animation: imgAnim,
+          willChange:"transform,opacity",
+          ...shakeStyle,
+        }}>
+          <img
+            src={src}
+            alt="cutscene"
+            style={{
+              maxWidth:"100%", maxHeight:"100%",
+              width:"auto", height:"auto",
+              objectFit:"contain",
+              display:"block",
+            }}
+          />
+
+          {/* 衝撃ライン（入場系カットシーンのみ） */}
+          {showImpact && [0,1,2,3].map(i => (
+            <div key={i} style={{
+              position:"absolute",
+              top: `${20 + i * 20}%`,
+              left:0, right:0,
+              height: i % 2 === 0 ? 3 : 2,
+              background: i % 2 === 0
+                ? `linear-gradient(90deg,transparent,${barColor}cc,transparent)`
+                : `linear-gradient(90deg,transparent,rgba(255,255,255,0.4),transparent)`,
+              animation:`danmakuImpactLine ${300 + i * 80}ms ease-out ${i * 40}ms both`,
+              pointerEvents:"none",
+            }} />
+          ))}
+        </div>
+
+        {/* スキャンライン */}
+        <div style={{
+          position:"absolute", inset:0, pointerEvents:"none",
+          backgroundImage:"repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.18) 3px,rgba(0,0,0,0.18) 4px)",
+          zIndex:1,
+        }} />
+
+        {/* グロー縁 */}
+        <div style={{
+          position:"absolute", inset:0, pointerEvents:"none",
+          boxShadow:`inset 0 0 80px 30px ${glowColor}`,
+          zIndex:2,
+        }} />
+
+        {/* コーナーフレーム装飾 */}
+        {["topLeft","topRight","bottomLeft","bottomRight"].map(corner => {
+          const isTop    = corner.startsWith("top");
+          const isLeft   = corner.includes("Left");
+          return (
+            <div key={corner} style={{
+              position:"absolute",
+              top:    isTop    ? 10 : undefined,
+              bottom: !isTop   ? 10 : undefined,
+              left:   isLeft   ? 10 : undefined,
+              right:  !isLeft  ? 10 : undefined,
+              width:32, height:32,
+              borderTop:    isTop  ? `2px solid ${barColor}` : undefined,
+              borderBottom: !isTop ? `2px solid ${barColor}` : undefined,
+              borderLeft:   isLeft  ? `2px solid ${barColor}` : undefined,
+              borderRight:  !isLeft ? `2px solid ${barColor}` : undefined,
+              opacity:0.7,
+              animation:"danmakuFrameBlink 0.6s step-end infinite",
+              animationDelay: `${["topLeft","topRight","bottomLeft","bottomRight"].indexOf(corner) * 120}ms`,
+              zIndex:3, pointerEvents:"none",
+            }} />
+          );
+        })}
+
+        {/* プログレスバー（下端） */}
+        <div style={{
+          position:"absolute", bottom:0, left:0, right:0,
+          height:4, background:"rgba(0,0,0,0.5)", zIndex:3,
+        }}>
+          <div style={{
+            height:"100%",
+            width:`${progress * 100}%`,
+            background:barColor,
+            boxShadow:`0 0 8px ${barColor}`,
+            transition:"none",
+          }} />
+        </div>
+
+        {/* フェーズラベル */}
+        <div style={{
+          position:"absolute", top:14, right:18,
+          fontFamily:"'Share Tech Mono',monospace",
+          fontSize:9, letterSpacing:3,
+          color: isSuccess ? "rgba(0,255,204,0.7)" : "rgba(255,68,102,0.7)",
+          zIndex:4,
+          textShadow:`0 0 8px ${barColor}`,
+        }}>
+          {phase === "pre1" ? "◆ INCOMING 01" : phase === "pre2" ? "◆ INCOMING 02" : "◆ EVADE SUCCESS"}
+        </div>
+      </div>
+    </>
+  );
+};
+
+/**
  * フルスクリーン固定コンテナ（各フェーズの最外wrapper）
  * center=true で display:flex / column / center / center を自動付与
  */
@@ -4924,6 +5171,12 @@ export default function ArcadiaCh2() {
   // dodgeTimeLeft: 残り秒数表示用
   const [dodgeTimeLeft, setDodgeTimeLeft] = useState(15);
 
+  // ── 弾幕カットシーン ──────────────────────────────────────────────────────
+  // danmakuCutscene: null | "pre1" | "pre2" | "postSuccess"
+  const [danmakuCutscene, setDanmakuCutscene] = useState(null);
+  // 弾幕開始を保留するコールバック（カットシーン後に実行）
+  const pendingDanmakuStartRef = useRef(null);
+
    // ── プレイング分析ステート ──────────────────────────────────────────────
    const [battleAnalytics, setBattleAnalytics] = useState([]);
    const [totalElemBreaks, setTotalElemBreaks] = useState(0);
@@ -6530,15 +6783,25 @@ export default function ArcadiaCh2() {
         setDodgeGridCollision([]);
         setDodgeGridAttackInfo(null);
         setDodgeGridTargetLabel(null);
-        if (resumeTurnRef.current) {
-          const resume = resumeTurnRef.current;
-          resumeTurnRef.current = null;
-          setTimeout(resume, 50);
+        if (noDmg) {
+          // 無傷成功 → 成功カットシーン（Damage03）を表示してからターン再開
+          if (resumeTurnRef.current) {
+            const resume = resumeTurnRef.current;
+            resumeTurnRef.current = null;
+            pendingDanmakuStartRef.current = resume;
+            setDanmakuCutscene("postSuccess");
+          }
+        } else {
+          if (resumeTurnRef.current) {
+            const resume = resumeTurnRef.current;
+            resumeTurnRef.current = null;
+            setTimeout(resume, 50);
+          }
         }
         return [];
       });
     }, 1200);
-  }, []);
+  }, [setDanmakuCutscene]);
 
   // 後方互換：旧グリッドUIから呼ばれる場合のshim（シューティングでは使わない）
   const onConfirmDodgeGrid = useCallback((cellIdx) => {
@@ -7856,7 +8119,9 @@ export default function ArcadiaCh2() {
       const hasAllTarget = hasAll;
       setDodgeGridTargetLabel(hasAllTarget ? null : representativeQ.targetLabel);
       setDodgeQueue(pendingDodgeQueue);
-      setDodgeGridPhase("select");
+      // ── 弾幕開始前カットシーン（Damage01 → Damage02 → 弾幕開始）
+      pendingDanmakuStartRef.current = () => setDodgeGridPhase("select");
+      setDanmakuCutscene("pre1");
     } else {
       finalizeTurn({});
     }
@@ -10425,6 +10690,55 @@ export default function ArcadiaCh2() {
               />
             );
           })()}
+
+          {/* ── 弾幕カットシーン オーバーレイ ────────────────────────────────── */}
+          {danmakuCutscene !== null && (() => {
+            const CS_IMGS = {
+              pre1:        "https://superapolon.github.io/Arcadia_Assets/CutScene/TestCS_Damage01.webp",
+              pre2:        "https://superapolon.github.io/Arcadia_Assets/CutScene/TestCS_Damage02.webp",
+              postSuccess: "https://superapolon.github.io/Arcadia_Assets/CutScene/TestCS_Damage03.webp",
+            };
+            // ── 各カットシーンの表示時間設定（ミリ秒）──────────────────────
+            // ここの値を変更すると表示時間を個別に調整できます
+            const CS_DURATION_MS = {
+              pre1:        1800,   // Damage01 の表示時間（デフォルト 0.5秒）
+              pre2:        1800,   // Damage02 の表示時間（デフォルト 0.5秒）
+              postSuccess: 1800,  // Damage03 無傷回避成功の表示時間（デフォルト 1.0秒）
+            };
+            const src = CS_IMGS[danmakuCutscene];
+            const dur = CS_DURATION_MS[danmakuCutscene] ?? 500;
+
+            const advanceCutscene = () => {
+              if (danmakuCutscene === "pre1") {
+                setDanmakuCutscene("pre2");
+              } else if (danmakuCutscene === "pre2") {
+                setDanmakuCutscene(null);
+                if (pendingDanmakuStartRef.current) {
+                  const start = pendingDanmakuStartRef.current;
+                  pendingDanmakuStartRef.current = null;
+                  setTimeout(start, 50);
+                }
+              } else if (danmakuCutscene === "postSuccess") {
+                setDanmakuCutscene(null);
+                if (pendingDanmakuStartRef.current) {
+                  const resume = pendingDanmakuStartRef.current;
+                  pendingDanmakuStartRef.current = null;
+                  setTimeout(resume, 50);
+                }
+              }
+            };
+
+            return (
+              <DanmakuCutsceneOverlay
+                key={danmakuCutscene}
+                src={src}
+                durationMs={dur}
+                onDone={advanceCutscene}
+                phase={danmakuCutscene}
+              />
+            );
+          })()}
+
 
           </div>
           <div style={{
